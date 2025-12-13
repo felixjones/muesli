@@ -274,4 +274,35 @@ concept HasTupleSize = requires {
     { std::tuple_size<std::remove_cvref_t<T>>::value };
 };
 
+/**
+ * @brief Concept that checks if all codecs in a pack support project(Owner)
+ *
+ * Validates that every codec in the variadic pack can project from the given Owner type.
+ * Used by tuple_codec to ensure all element codecs support projection before attempting
+ * to extract values from a struct or class.
+ *
+ * This is essential for member_codec chains, where each codec projects a specific field
+ * from the owner struct using a member pointer.
+ *
+ * @tparam Owner The source type to project from (typically a struct/class)
+ * @tparam Codecs Variadic pack of codec types to check
+ *
+ * @code
+ * struct Person {
+ *     int age;
+ *     std::string name;
+ * };
+ *
+ * using AgeCodec = member_codec<identity_codec<int>, &Person::age>;
+ * using NameCodec = member_codec<identity_codec<std::string>, &Person::name>;
+ *
+ * static_assert(CodecsProjectableFrom<Person, AgeCodec, NameCodec>);
+ * @endcode
+ *
+ * @see tuple_codec::project
+ * @see member_codec
+ */
+template<typename Owner, typename... Codecs>
+concept CodecsProjectableFrom = (requires(const Codecs& c, const Owner& o) { c.project(o); } && ...);
+
 } // namespace muesli
