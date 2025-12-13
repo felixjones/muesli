@@ -1,0 +1,74 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+/** @brief Forward declaration of apply_codec */
+template<Codec ArgCodec, typename ValueType>
+requires(!std::same_as<typename ArgCodec::value_type, ValueType>)
+struct apply_codec;
+}
+
+namespace muesli::fluent {
+
+/**
+ * @brief Mixin providing .apply<T>() to construct values of type T
+ *
+ * This mixin provides the .apply<TargetType>() method which wraps the current
+ * codec in an apply_codec to encode/decode a different type than the codec's
+ * native value_type. Useful for adapting codecs to custom types.
+ *
+ * @code
+ * // Custom type
+ * struct Person {
+ *     int id;
+ *     std::string name;
+ *     float score;
+ * };
+ *
+ * // Codec for the tuple representation
+ * auto tuple_codec_obj = muesli::tuple_codec(
+ *     int32_codec,
+ *     string_codec,
+ *     float_codec
+ * );
+ *
+ * // Apply to target type with custom constructor logic
+ * auto person_codec = tuple_codec_obj.apply<Person>();
+ *
+ * Person p = {42, "Alice", 95.5f};
+ * auto encoded = person_codec.encode(p);
+ * Person decoded = person_codec.decode(encoded);
+ * @endcode
+ */
+template<typename Derived>
+struct constructable {
+    /**
+     * @brief Creates an apply_codec targeting the specified type
+     *
+     * Wraps this codec with type transformation to encode/decode a different
+     * target type. The apply_codec will call user-provided constructor functions
+     * or use default construction when transitioning between types.
+     *
+     * @tparam ValueType The target type to encode/decode
+     * @return An apply_codec that constructs ValueType from this codec
+     *
+     * @code
+     * struct Point { double x, y; };
+     * auto coords = tuple_codec(double_codec, double_codec);
+     * auto point_codec = coords.apply<Point>();
+     * @endcode
+     */
+    template<typename ValueType>
+    constexpr auto apply() const noexcept {
+        return muesli::apply_codec<Derived, ValueType>{static_cast<const Derived&>(*this)};
+    }
+};
+
+} // namespace muesli::fluent

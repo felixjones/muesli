@@ -1,0 +1,152 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/identity_codec>
+#include <muesli/range_codec>
+#include <muesli/tuple_codec>
+#include <muesli/util/concepts>
+
+#include <iostream>
+#include <vector>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for encoding/decoding std::vector containers
+ *
+ * The vector_codec handles serialisation of std::vector<T> by encoding it as a
+ * pair of (size, range) where the range yields all elements. This allows efficient
+ * serialisation of arbitrary-sized vectors.
+ *
+ * @tparam ElementCodec The codec for individual vector elements
+ * @tparam Allocator The allocator type (default: std::allocator)
+ *
+ * Template member types:
+ * - value_type: std::vector<ElementCodec::value_type, Allocator>
+ * - encoded_type: std::pair<std::size_t, range_holder<ElementCodec::value_type>>
+ *
+ * Example usage:
+ * ```cpp
+ * auto elem_codec = muesli::int32_codec;
+ * auto vec_codec = muesli::vector_of(elem_codec);
+ *
+ * std::vector<int32_t> vec = {1, 2, 3, 4, 5};
+ * auto encoded = vec_codec.encode(vec);
+ * auto decoded = vec_codec.decode(encoded);
+ * ```
+ *
+ * @note Encodes the vector size followed by each element
+ * @note Supports custom allocators via template parameter
+ * @note Works with all fluent API mixins (optional, constrain, transform, etc.)
+ */
+template<Codec ElementCodec, class Allocator = std::allocator<typename ElementCodec::value_type>>
+struct vector_codec : fluent::optionable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::constrainable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::transformable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::projectable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::constructable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::nullableable<vector_codec<ElementCodec, Allocator>> {
+    using value_type = std::vector<typename ElementCodec::value_type, Allocator>;
+
+    ElementCodec element_codec;
+
+    /**
+     * @brief Constructs a vector_codec with the given element codec
+     * @param codec The codec to use for encoding/decoding vector elements
+     */
+    explicit constexpr vector_codec(const ElementCodec& codec) noexcept : element_codec(codec) {}
+
+    /**
+     * @brief Gets the next codec (pair of size and range codec)
+     * @return A pair codec with size codec and range codec
+     */
+    constexpr auto next_codec() const noexcept {
+        return pair_codec(identity_codec<std::size_t>{}, range_codec(element_codec));
+    }
+
+    /**
+     * @brief Encodes a const vector to size and range holder
+     * @param value The vector to encode
+     * @return A pair of vector size and range holder
+     */
+    static constexpr auto encode(const value_type& value) noexcept {
+        return std::pair(value.size(), range_holder<typename ElementCodec::value_type>(value));
+    }
+
+    /**
+     * @brief Encodes an rvalue vector to size and range holder
+     * @param value The vector to encode (will be moved)
+     * @return A pair of vector size and range holder
+     */
+    static constexpr auto encode(value_type&& value) noexcept {
+        const auto size = value.size();
+        return std::pair(size, range_holder<typename ElementCodec::value_type>(std::move(value)));
+    }
+
+    /**
+     * @brief Decodes a tuple of (size, range) to a vector
+     * @param tup The encoded tuple
+     * @return A vector with all elements from the range
+     */
+    static constexpr value_type decode(const auto& tup) {
+        auto&& [size, value] = tup;
+        value_type result{};
+        result.reserve(size);
+
+        auto it = value.begin();
+        for (std::size_t count = 0; count < size; ++count) {
+            result.emplace_back(std::forward<decltype(*it)>(*it));
+            ++it;
+        }
+        return result;
+    }
+
+    /**
+     * @brief Decodes an rvalue tuple of (size, range) to a vector
+     * @param tup The encoded tuple
+     * @return A vector with all elements from the range
+     */
+    static constexpr value_type decode(auto&& tup) {
+        auto&& [size, value] = std::forward<decltype(tup)>(tup);
+        value_type result{};
+        result.reserve(size);
+
+        auto it = value.begin();
+        for (std::size_t count = 0; count < size; ++count) {
+            result.emplace_back(std::forward<decltype(*it)>(*it));
+            ++it;
+        }
+        return result;
+    }
+};
+
+/**
+ * @brief Helper function to create a vector_codec
+ * @tparam ElementCodec The type of codec for vector elements
+ * @tparam Allocator The allocator type (optional, default: std::allocator)
+ * @param elem The element codec to use
+ * @return A vector_codec instance
+ *
+ * Example:
+ * ```cpp
+ * auto codec = muesli::vector_of(muesli::int32_codec);
+ * ```
+ */
+template<Codec ElementCodec, class Allocator = std::allocator<typename ElementCodec::value_type>>
+constexpr auto vector_of(const ElementCodec& elem) {
+    return vector_codec<ElementCodec, Allocator>{elem};
+}
+
+} // namespace muesli

@@ -1,0 +1,566 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+#include <muesli/util/type_traits>
+
+#include <array>
+#include <bit>
+#include <concepts>
+#include <cstdint>
+#include <ios>
+#include <limits>
+
+namespace muesli {
+
+/** @brief Concept for streams that support push operations for move-only types */
+template<typename Stream, typename T>
+concept StreamPush = requires(Stream& stream, T value) {
+    { stream.template push<T>(std::move(value)) };
+};
+
+/** @brief Concept for streams that support peek and pop operations for move-only types */
+template<typename Stream, typename T>
+concept StreamPeekPop = requires(Stream& stream) {
+    { stream.template peek<T>() };
+    { stream.template pop<T>() };
+};
+
+/**
+ * @brief Concept for output streams that can write values of type T
+ *
+ * Supports streams with operator<<, write(), or sputn() methods.
+ * For move-only types, also requires StreamPush support.
+ */
+template<typename Stream, typename T>
+    concept OutputStream = (
+        requires(Stream& stream, const T& value) { stream << value; }
+        || requires(Stream& stream, const T* data, std::streamsize size) { stream.write(data, size); }
+        || requires(Stream& stream, const T* data, std::streamsize size) { stream.sputn(data, size); }
+    ) && (is_move_only_v<T> ? StreamPush<Stream, T> : true);
+
+/**
+ * @brief Concept for input streams that can read values of type T
+ *
+ * Supports streams with operator>>, read(), or sgetn() methods.
+ * For move-only types, also requires StreamPeekPop support.
+ */
+template<typename Stream, typename T>
+    concept InputStream = (
+        requires(Stream& stream, T& value) { stream >> value; }
+        || requires(Stream& stream, T* data, std::streamsize size) { stream.read(data, size); }
+        || requires(Stream& stream, T* data, std::streamsize size) { stream.sgetn(data, size); }
+    ) && (is_move_only_v<T> ? StreamPeekPop<Stream, T> : true);
+
+/**
+ * @category Format Classes
+ * @brief Binary serialisation format for encoding/decoding codec values
+ *
+ * @tparam C The codec to use for encoding/decoding
+ * @tparam ByteT The byte type for the binary representation (default: std::byte)
+ */
+template<typename C, typename ByteT = std::byte>
+struct binary_format {
+    static_assert(Codec<C>, "C must satisfy the Codec concept");
+    static_assert(sizeof(ByteT) == sizeof(std::byte), "ByteT must be same size as std::byte");
+
+    using value_type = typename std::decay_t<C>::value_type;
+
+    C codec;
+
+    constexpr explicit binary_format(Codec auto c) : codec{c} {}
+
+    template<typename, typename>
+    friend struct binary_format;
+
+    /**
+     * @brief Serialises multiple values from an input stream to a byte output stream
+     * @param input Stream to read values from
+     * @param output Byte stream to write encoded data to
+     * @param count Number of values to serialise
+     * @return Number of values successfully serialised
+     */
+    template<InputStream<value_type> ValueStream, OutputStream<ByteT> ByteStream>
+    constexpr std::size_t serialize(ValueStream& input, ByteStream& output, std::size_t count) const {
+        std::size_t total_written = 0;
+        while (count--) {
+            if (!serialize(std::forward<value_type>(read_from(input)), output)) {
+                break;
+            }
+            total_written += 1;
+        }
+        return total_written;
+    }
+
+    /**
+     * @brief Serialises a single value to a byte output stream
+     * @param value The value to serialise
+     * @param output Byte stream to write encoded data to
+     * @return true if serialisation succeeded, false otherwise
+     */
+    template<OutputStream<ByteT> ByteStream>
+    constexpr bool serialize(auto&& value, ByteStream& output) const
+        requires requires { codec.encode(std::forward<decltype(value)>(value)); }
+    {
+        using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+        using encoded_type = typename next_codec_type::value_type;
+        auto encoded_value = codec.encode(std::forward<decltype(value)>(value));
+        if constexpr (requires { serialize_primitive(std::forward<encoded_type>(encoded_value), output); }) {
+            return serialize_primitive(std::forward<encoded_type>(encoded_value), output);
+        }
+        auto next_fmt = binary_format<next_codec_type, ByteT>(codec.next_codec());
+        return next_fmt.serialize(std::forward<encoded_type>(encoded_value), output);
+    }
+
+    /**
+     * @brief Deserialises multiple values from a byte input stream to an output stream
+     * @param input Byte stream to read encoded data from
+     * @param output Stream to write decoded values to
+     * @param count Number of values to deserialise
+     * @return Number of values successfully deserialised
+     */
+    template<InputStream<ByteT> ByteStream, OutputStream<value_type> ValueStream>
+    constexpr std::size_t deserialize(ByteStream& input, ValueStream& output, std::size_t count) const {
+        std::size_t total_read = 0;
+        while (count--) {
+            if (auto&& read_value = deserialize(input)) {
+                write_to(std::move(*read_value), output);
+                total_read += 1;
+            } else {
+                break;
+            }
+        }
+        return total_read;
+    }
+
+    /**
+     * @brief Deserialises a single value from a byte input stream
+     * @param input Byte stream to read encoded data from
+     * @return Optional containing the decoded value, or nullopt on failure
+     */
+    template<InputStream<ByteT> ByteStream>
+    constexpr std::optional<value_type> deserialize(ByteStream& input) const {
+        if constexpr (requires { deserialize_primitive(input); }) {
+            return deserialize_primitive(input);
+        } else {
+            using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+            auto next_codec = codec.next_codec();
+            binary_format<next_codec_type, ByteT> next_format{next_codec};
+            if (auto encoded = next_format.deserialize(input)) {
+                return codec.decode(std::move(*encoded));
+            }
+        }
+        return std::nullopt;
+    }
+
+  protected:
+    static constexpr value_type deserialize_primitive(InputStream<ByteT> auto&)
+        requires std::same_as<std::monostate, std::decay_t<value_type>>
+    {
+        return std::monostate{};
+    }
+
+    constexpr value_type deserialize_primitive(InputStream<ByteT> auto& input) const
+        requires std::is_fundamental_v<value_type>
+    {
+        align_input(input, alignof(value_type));
+        const std::array<ByteT, sizeof(value_type)> value = read_bytes<sizeof(value_type)>(input);
+        if constexpr (std::is_trivially_copyable_v<value_type>) {
+            return std::bit_cast<value_type>(value);
+        } else if constexpr (requires { value_type(value.begin(), value.end()); }) {
+            return value_type(value.begin(), value.end());
+        } else if constexpr (std::constructible_from<value_type, decltype(value)>) {
+            return value_type(value);
+        } else {
+            static_assert(sizeof(value_type) == 0, "Cannot construct value_type from byte array");
+        }
+    }
+
+    constexpr std::optional<value_type> deserialize_primitive(InputStream<ByteT> auto& input) const
+        requires is_tuple_v<value_type>
+    {
+        return deserialize_tuple_impl(input, std::make_index_sequence<std::tuple_size_v<value_type>>{});
+    }
+
+    value_type deserialize_primitive(InputStream<ByteT> auto& input) const
+        requires(is_range_holder_v<value_type> && requires { codec.element_codec; })
+    {
+        auto element_codec = codec.element_codec;
+        return range_holder<typename decltype(element_codec)::value_type>(
+            [element_codec, &input, this]() mutable -> std::optional<typename decltype(element_codec)::value_type> {
+                auto elem_fmt = binary_format<decltype(element_codec), ByteT>(element_codec);
+                return elem_fmt.deserialize(input);
+            }
+        );
+    }
+
+    constexpr std::optional<value_type> deserialize_primitive(InputStream<ByteT> auto& input) const
+        requires(is_variant_v<value_type> && requires { codec.next_codec(); })
+    {
+        return deserialize_variant_impl(input, std::make_index_sequence<std::variant_size_v<value_type>>{});
+    }
+
+    constexpr bool serialize_primitive(auto monostate_value, OutputStream<ByteT> auto&) const
+        requires std::same_as<std::monostate, std::decay_t<decltype(monostate_value)>>
+    {
+        return true; // Do nothing for monostate
+    }
+
+    constexpr bool serialize_primitive(auto fundamental_value, OutputStream<ByteT> auto& output) const
+        requires std::is_fundamental_v<std::decay_t<decltype(fundamental_value)>>
+    {
+        align_output(output, alignof(std::decay_t<decltype(fundamental_value)>));
+        write_to(std::bit_cast<std::array<ByteT, sizeof(fundamental_value)>>(fundamental_value), output);
+        return true;
+    }
+
+    constexpr bool serialize_primitive(auto&& tuple_value, OutputStream<ByteT> auto& output) const
+        requires(is_tuple_v<std::decay_t<decltype(tuple_value)>> &&
+                 requires { codec.next_codec().encode(std::forward<decltype(tuple_value)>(tuple_value)); })
+    {
+        return serialize_tuple_impl(
+            std::forward<decltype(tuple_value)>(tuple_value),
+            output,
+            std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{}
+        );
+    }
+
+    constexpr bool serialize_primitive(auto&& range_value, OutputStream<ByteT> auto& output) const
+        requires(is_range_holder_v<std::decay_t<decltype(range_value)>> && requires { codec.element_codec; })
+    {
+        auto element_codec = codec.element_codec;
+        auto next_element_codec = element_codec.next_codec();
+        auto elem_fmt = binary_format<decltype(next_element_codec), ByteT>(next_element_codec);
+        for (auto&& elem : range_value) {
+            auto encoded_elem = element_codec.encode(std::forward<decltype(elem)>(elem));
+            if (!elem_fmt.serialize(std::move(encoded_elem), output)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    constexpr bool serialize_primitive(auto&& variant_value, OutputStream<ByteT> auto& output) const
+        requires(is_variant_v<std::decay_t<decltype(variant_value)>> &&
+                 requires { codec.next_codec().encode(std::forward<decltype(variant_value)>(variant_value)); })
+    {
+        constexpr auto variant_alignment = variant_alignment_v<std::decay_t<decltype(variant_value)>>;
+        constexpr auto variant_alternative_count = std::variant_size_v<std::decay_t<decltype(variant_value)>>;
+        using index_type = std::conditional_t<
+            variant_alignment <= 1 && variant_alternative_count <= std::numeric_limits<std::uint8_t>::max(),
+            std::uint8_t,
+            std::conditional_t<
+                variant_alignment <= 2 && variant_alternative_count <= std::numeric_limits<std::uint16_t>::max(),
+                std::uint16_t,
+                std::conditional_t<variant_alignment <= 4 &&
+                                       variant_alternative_count <= std::numeric_limits<std::uint32_t>::max(),
+                                   std::uint32_t, std::uint64_t>>>;
+        align_output(output, alignof(index_type));
+        write_to(
+            std::bit_cast<std::array<ByteT, sizeof(index_type)>>(static_cast<index_type>(variant_value.index())),
+            output
+        );
+        return serialize_variant_impl(
+            std::forward<decltype(variant_value)>(variant_value), output,
+            std::make_index_sequence<std::variant_size_v<std::decay_t<decltype(variant_value)>>>{});
+    }
+
+  private:
+    template<InputStream<ByteT> ByteStream, std::size_t... Is>
+    constexpr std::optional<value_type> deserialize_tuple_impl(ByteStream& input, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+
+        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(next_codec.codecs)>::value_type>...>
+            elements{deserialize_element_encoded(input, std::get<Is>(next_codec.codecs))...};
+
+        if (check_all_have_value<Is...>(elements)) {
+            auto encoded_tuple = std::make_tuple(std::move(*std::get<Is>(elements))...);
+            return std::optional<value_type>{codec.decode(std::move(encoded_tuple))};
+        }
+
+        return std::nullopt;
+    }
+
+    template<std::size_t... Is, typename Tuple>
+    static constexpr bool check_all_have_value(const Tuple& elements) {
+        return (std::get<Is>(elements).has_value() && ...);
+    }
+
+    template<InputStream<ByteT> ByteStream, std::size_t... Is>
+    constexpr std::optional<value_type> deserialize_variant_impl(ByteStream& input, std::index_sequence<Is...>) const {
+        constexpr auto variant_alignment = variant_alignment_v<value_type>;
+        constexpr auto variant_alternative_count = std::variant_size_v<value_type>;
+        using index_type = std::conditional_t<
+            variant_alignment <= 1 && variant_alternative_count <= std::numeric_limits<std::uint8_t>::max(),
+            std::uint8_t,
+            std::conditional_t<
+                variant_alignment <= 2 && variant_alternative_count <= std::numeric_limits<std::uint16_t>::max(),
+                std::uint16_t,
+                std::conditional_t<variant_alignment <= 4 &&
+                                       variant_alternative_count <= std::numeric_limits<std::uint32_t>::max(),
+                                   std::uint32_t, std::uint64_t>>>;
+
+        // Read the index
+        align_input(input, alignof(index_type));
+        const std::array<ByteT, sizeof(index_type)> index_bytes = read_bytes<sizeof(index_type)>(input);
+        const index_type active_index = std::bit_cast<index_type>(index_bytes);
+
+        if (active_index >= variant_alternative_count) {
+            return std::nullopt; // Invalid index
+        }
+
+        auto next_codec = codec.next_codec();
+        std::optional<value_type> result;
+        deserialize_variant_at_index<Is...>(input, next_codec, static_cast<std::size_t>(active_index), result);
+        return result;
+    }
+
+    template<std::size_t... Is, typename NextCodec>
+    constexpr void deserialize_variant_at_index(InputStream<ByteT> auto& input, const NextCodec& next_codec,
+                                                std::size_t active_index, std::optional<value_type>& result) const {
+        (deserialize_variant_alternative<Is>(input, next_codec, active_index, result) || ...);
+    }
+
+    template<std::size_t I, typename NextCodec>
+    constexpr bool deserialize_variant_alternative(InputStream<ByteT> auto& input, const NextCodec& next_codec,
+                                                   std::size_t active_index,
+                                                   std::optional<value_type>& result) const {
+        if (I != active_index) {
+            return false;
+        }
+
+        auto elem_codec = std::get<I>(next_codec.codecs);
+        auto elem_fmt = binary_format<decltype(elem_codec), ByteT>(elem_codec);
+
+        if (auto elem_opt = elem_fmt.deserialize(input)) {
+            using encoded_variant_type = typename decltype(next_codec)::value_type;
+            encoded_variant_type encoded_var(std::in_place_index<I>, std::move(*elem_opt));
+            result = codec.decode(std::move(encoded_var));
+        }
+
+        return true;
+    }
+
+    template<InputStream<ByteT> ByteStream, typename EncCodec>
+    constexpr auto deserialize_element_encoded(ByteStream& input, const EncCodec& enc_codec) const {
+        auto enc_fmt = binary_format<EncCodec, ByteT>(enc_codec);
+        return enc_fmt.deserialize(input);
+    }
+
+    template<InputStream<ByteT> ByteStream, typename ElementCodec>
+    constexpr auto deserialize_element(ByteStream& input, const ElementCodec& elem_codec) const {
+        auto elem_fmt = binary_format<ElementCodec, ByteT>(elem_codec);
+        return elem_fmt.deserialize(input);
+    }
+
+    template<typename TupleValue, OutputStream<ByteT> ByteStream, std::size_t... Is>
+    constexpr bool serialize_tuple_impl(TupleValue&& tuple_value, ByteStream& output,
+                                        std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        bool result = true;
+        (..., (result = result && serialize_element(std::get<Is>(tuple_value), output, std::get<Is>(next_codec.codecs))));
+        return result;
+    }
+
+    template<typename VariantValue, OutputStream<ByteT> ByteStream, std::size_t... Is>
+    constexpr bool serialize_variant_impl(VariantValue&& variant_value, ByteStream& output,
+                                          std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        std::size_t runtime_index = variant_value.index();
+        return serialize_variant_at_index<Is...>(
+            std::forward<VariantValue>(variant_value),
+            output,
+            next_codec,
+            runtime_index
+        );
+    }
+
+    template<std::size_t... Is, typename VariantValue>
+    constexpr bool serialize_variant_at_index(VariantValue&& variant_value, OutputStream<ByteT> auto& output,
+                                              const auto& next_codec, std::size_t runtime_index) const {
+        bool result = false;
+        (serialize_variant_alternative<Is>(std::forward<VariantValue>(variant_value), output, next_codec,
+                                           runtime_index, result) || ...);
+        return result;
+    }
+
+    template<std::size_t I, typename VariantValue>
+    constexpr bool serialize_variant_alternative(VariantValue&& variant_value, OutputStream<ByteT> auto& output,
+                                                 const auto& next_codec, std::size_t runtime_index,
+                                                 bool& result) const {
+        if (I != runtime_index) {
+            return false;
+        }
+
+        result = serialize_element(
+            std::get<I>(std::forward<VariantValue>(variant_value)),
+            output,
+            std::get<I>(next_codec.codecs)
+        );
+        return true;
+    }
+
+    template<typename ElementValue, OutputStream<ByteT> ByteStream, typename ElementCodec>
+    constexpr bool serialize_element(ElementValue&& elem_value, ByteStream& output,
+                                     const ElementCodec& elem_codec) const {
+        auto elem_fmt = binary_format<ElementCodec, ByteT>(elem_codec);
+        if constexpr (is_move_only_v<typename ElementCodec::value_type>) {
+            return elem_fmt.serialize(std::move(elem_value), output);
+        } else {
+            return elem_fmt.serialize(std::forward<ElementValue>(elem_value), output);
+        }
+    }
+
+    constexpr void align_output(OutputStream<ByteT> auto& output, std::size_t alignment) const {
+        if (alignment <= 1) {
+            return;
+        }
+        std::size_t current_pos = 0;
+        if constexpr (requires { output.tellp(); }) {
+            current_pos = static_cast<std::size_t>(output.tellp());
+        } else {
+            static_assert(sizeof(ByteT) == 0, "Output stream does not support tellp for alignment");
+        }
+        std::size_t padding = (alignment - (current_pos % alignment)) % alignment;
+        for (std::size_t i = 0; i < padding; ++i) {
+            constexpr ByteT zero_byte{};
+            if constexpr (requires { output << zero_byte; }) {
+                output << zero_byte;
+            } else if constexpr (requires { output.write(&zero_byte, 1); }) {
+                output.write(&zero_byte, 1);
+            } else if constexpr (requires { output.sputn(&zero_byte, 1); }) {
+                output.sputn(&zero_byte, 1);
+            }
+        }
+    }
+
+    constexpr void align_input(InputStream<ByteT> auto& input, std::size_t alignment) const {
+        if (alignment <= 1) {
+            return;
+        }
+        std::size_t current_pos = 0;
+        if constexpr (requires { input.tellg(); }) {
+            current_pos = static_cast<std::size_t>(input.tellg());
+        } else {
+            static_assert(sizeof(ByteT) == 0, "Input stream does not support tellg for alignment");
+        }
+        std::size_t padding = (alignment - (current_pos % alignment)) % alignment;
+        if (padding > 0) {
+            if constexpr (requires { input.seekg(current_pos + padding); }) {
+                input.seekg(current_pos + padding);
+            } else {
+                // Read and discard padding bytes
+                for (std::size_t i = 0; i < padding; ++i) {
+                    ByteT dummy;
+                    if constexpr (requires { input >> dummy; }) {
+                        input >> dummy;
+                    } else if constexpr (requires { input.read(&dummy, 1); }) {
+                        input.read(&dummy, 1);
+                    } else if constexpr (requires { input.sgetn(&dummy, 1); }) {
+                        input.sgetn(&dummy, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    template<OutputStream<ByteT> ByteStream>
+    constexpr void write_to(std::ranges::range auto&& value, ByteStream& output) const
+        requires std::same_as<std::ranges::range_value_t<std::decay_t<decltype(value)>>, ByteT>
+    {
+        if constexpr (requires { output << value[0]; }) {
+            for (auto& byte : value) {
+                output << byte;
+            }
+        } else if constexpr (requires { output.write(value.data(), static_cast<std::streamsize>(value.size())); }) {
+            output.write(value.data(), static_cast<std::streamsize>(value.size()));
+        } else if constexpr (requires { output.sputn(value.data(), static_cast<std::streamsize>(value.size())); }) {
+            output.sputn(value.data(), static_cast<std::streamsize>(value.size()));
+        }
+    }
+
+    template<OutputStream<value_type> ValueStream>
+    constexpr void write_to(value_type&& value, ValueStream& output) const {
+        if constexpr (requires { output << value; }) {
+            output << value;
+        } else if constexpr (requires { output.write(&value, 1); }) {
+            output.write(&value, 1);
+        } else if constexpr (requires { output.sputn(&value, 1); }) {
+            output.sputn(&value, 1);
+        }
+    }
+
+    template<std::size_t N, InputStream<ByteT> ByteStream>
+    constexpr std::array<ByteT, N> read_bytes(ByteStream& input) const {
+        std::array<ByteT, N> value;
+        if constexpr (requires { input.read(value.data(), N); }) {
+            input.read(value.data(), N);
+        } else if constexpr (requires { input.sgetn(value.data(), static_cast<std::streamsize>(N)); }) {
+            input.sgetn(value.data(), static_cast<std::streamsize>(N));
+        } else {
+            static_assert(N == 0, "Cannot read bytes from stream");
+        }
+        return value;
+    }
+
+    template<InputStream<value_type> ValueStream>
+    constexpr auto read_from(ValueStream& input) const -> decltype(auto) {
+        if constexpr (is_move_only_v<value_type> || requires {
+                          input.template peek<value_type>();
+                          input.template pop<value_type>();
+                      }) {
+            auto&& x = std::move(input.template peek<value_type>());
+            input.template pop<value_type>(x);
+            return std::move(x);
+        } else if constexpr (std::is_default_constructible_v<value_type> && !std::is_trivially_copyable_v<value_type>) {
+            value_type value;
+            if constexpr (requires { input >> value; }) {
+                input >> value;
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "Default constructible value_type cannot be read from input stream");
+            }
+            return value;
+        } else if constexpr (std::is_trivially_copyable_v<value_type>) {
+            value_type value;
+            if constexpr (requires { input.read(&value, 1); }) {
+                input.read(&value, 1);
+            } else if constexpr (requires { input.sgetn(&value, 1); }) {
+                input.sgetn(&value, 1);
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "Trivially copyable value_type cannot be read from input stream");
+            }
+            return value;
+        } else {
+            static_assert(sizeof(value_type) == 0, "Cannot read value_type from input stream");
+        }
+    }
+};
+
+/**
+ * @brief Deduction guide for binary_format.
+ *
+ * Allows construction of binary_format without explicitly specifying template parameters.
+ */
+template<typename C>
+binary_format(C&&) -> binary_format<std::decay_t<C>>;
+
+/**
+ * @brief Helper function to create a binary_format with explicit byte type.
+ *
+ * @tparam ByteT The byte type to use for serialisation (char, std::byte)
+ * @param c The codec to use for encoding/decoding
+ * @return A binary_format configured with the specified codec and byte type
+ */
+template<typename ByteT>
+static constexpr auto make_binary_format(Codec auto&& c) {
+    return binary_format<std::decay_t<decltype(c)>, ByteT>(std::forward<decltype(c)>(c));
+}
+
+} // namespace muesli

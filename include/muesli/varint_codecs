@@ -1,0 +1,87 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/delimited_codec>
+#include <muesli/stdint_codecs>
+#include <muesli/transform_codec>
+#include <muesli/util/range_holder>
+
+#include <cstdint>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for variable-length encoded unsigned integers (varint).
+ *
+ * Uses the upper bit in each byte as a continuation marker for compact
+ * representation of non-negative integers: Smaller values take fewer bytes.
+ *
+ * Example:
+ * ```cpp
+ * // 0 encodes to 1 byte: 0x00
+ * // 127 encodes to 1 byte: 0x7F
+ * // 128 encodes to 2 bytes: 0x80, 0x01
+ * auto encoded = unsigned_varint_codec.encode(128u);
+ * ```
+ */
+inline constexpr auto unsigned_varint_codec = transform_codec(
+    delimited_codec(uint8_codec,
+                    [](std::uint8_t b) { return (b & 0x80) == 0; } // Predicate: top bit clear = not continuation
+                    ),
+    // Encode: uintmax_t -> range_holder<uint8_t>
+    [](std::uintmax_t value) {
+        return range_holder<std::uint8_t>([value, done = false]() mutable -> std::optional<std::uint8_t> {
+            if (done) {
+                return std::nullopt;
+            }
+
+            std::uint8_t byte = value & 0x7F;
+            value >>= 7;
+
+            if (value == 0) {
+                done = true;
+                return byte; // Last byte - no continuation bit
+            } else {
+                return byte | 0x80; // More bytes to follow
+            }
+        });
+    },
+    // Decode: range_holder<uint8_t> -> uintmax_t
+    [](range_holder<std::uint8_t>&& bytes) {
+        std::uintmax_t result = 0;
+        unsigned int shift = 0;
+
+        for (const auto& byte : bytes) {
+            if (shift >= sizeof(std::uintmax_t) * 8) {
+                throw std::overflow_error("unsigned_varint: decoded value too large");
+            }
+            result |= static_cast<std::uintmax_t>(byte & 0x7F) << shift;
+            shift += 7;
+        }
+
+        return result;
+    });
+
+/**
+ * @brief Codec for signed integers using zigzag encoding with variable-length encoding
+ *
+ * Converts signed integers to unsigned using zigzag encoding before applying varint encoding.
+ * This ensures small negative numbers also encode efficiently.
+ */
+inline constexpr auto signed_varint_codec = transform_codec(
+    unsigned_varint_codec,
+    // ZigZag encode: intmax_t -> uintmax_t
+    [](std::intmax_t n) -> std::uintmax_t {
+        constexpr int bits = sizeof(std::intmax_t) * 8;
+        return (static_cast<std::uintmax_t>(n) << 1) ^ static_cast<std::uintmax_t>(n >> (bits - 1));
+    },
+    // ZigZag decode: uintmax_t -> intmax_t
+    [](std::uintmax_t n) -> std::intmax_t { return static_cast<std::intmax_t>((n >> 1) ^ -(n & 1)); });
+
+} // namespace muesli

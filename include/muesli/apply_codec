@@ -1,0 +1,286 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/type_traits>
+#include <muesli/util/concepts>
+
+#include <type_traits>
+
+namespace muesli {
+
+/** @brief Forward declaration for apply_codec with distinct ValueType. */
+template<Codec ArgCodec, typename ValueType>
+requires(!std::same_as<typename ArgCodec::value_type, ValueType>)
+struct apply_codec;
+
+/**
+ * @category Composite Codecs
+ * @brief Codec adapter that enables encoding/decoding to a different value_type than the underlying codec.
+ *
+ * Converts between ValueType and ArgCodec::value_type via projection, variant/optional handling,
+ * range conversion, tuple decomposition, direct construction, or static_cast.
+ *
+ * @see construct_as
+ *
+ * Example:
+ * @code
+ * auto codec = muesli::identity_codec<int>{}.apply<float>();
+ * int enc = codec.encode(42.7f);
+ * float dec = codec.decode(enc);
+ * @endcode
+ */
+template<Codec ArgCodec, typename ValueType>
+requires(!std::same_as<typename ArgCodec::value_type, ValueType>)
+struct apply_codec : fluent::optionable<apply_codec<ArgCodec, ValueType>>,
+                     fluent::constrainable<apply_codec<ArgCodec, ValueType>>,
+                     fluent::transformable<apply_codec<ArgCodec, ValueType>>,
+                     fluent::projectable<apply_codec<ArgCodec, ValueType>>,
+                     fluent::constructable<apply_codec<ArgCodec, ValueType>>,
+                     fluent::nullableable<apply_codec<ArgCodec, ValueType>> {
+    /** @brief The desired value type after type conversion */
+    using value_type = ValueType;
+    /** @brief The encoded type produced by the underlying codec */
+    using encoded_type = typename ArgCodec::value_type;
+
+    /** @brief The underlying codec used for encoding/decoding */
+    ArgCodec arg_codec;
+
+    /** @brief Constructs an apply_codec wrapping the given codec */
+    explicit constexpr apply_codec(const ArgCodec& codec) noexcept : arg_codec(codec) {}
+
+    /** @brief Returns the next codec in the encoding chain */
+    constexpr ArgCodec next_codec() const noexcept {
+        return arg_codec;
+    }
+
+    /** @brief Encodes a value by converting from value_type to encoded_type */
+    constexpr encoded_type encode(const value_type& value) const noexcept {
+        if constexpr (requires { { arg_codec.project(value) } -> std::convertible_to<encoded_type>; }) {
+            return arg_codec.project(value);
+        } else if constexpr (is_variant_v<encoded_type> && std::constructible_from<encoded_type, value_type>) {
+            return encoded_type{value};
+        } else if constexpr (is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>) {
+            return encode_optional(value);
+        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+            if constexpr (requires { encoded_type{value.begin(), value.end()}; }) {
+                return encoded_type{value.begin(), value.end()};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to encode ranges value_type to encoded_type");
+            }
+        } else if constexpr (muesli::HasTupleSize<encoded_type> && muesli::HasTupleSize<value_type>) {
+            return encode_tuple_like_lvalue(value);
+        } else if constexpr (std::constructible_from<encoded_type, value_type>) {
+            return encoded_type{value};
+        } else if constexpr (std::is_convertible_v<value_type, encoded_type>) {
+            return static_cast<encoded_type>(value);
+        } else {
+            static_assert(sizeof(value_type) == 0, "apply_codec: Unable to encode value_type to encoded_type");
+        }
+    }
+
+    /** @brief Encodes a value by converting from value_type to encoded_type (rvalue overload) */
+    constexpr encoded_type encode(value_type&& value) const noexcept {
+        if constexpr (requires { { arg_codec.project(std::move(value)) } -> std::convertible_to<encoded_type>; }) {
+            return arg_codec.project(std::move(value));
+        } else if constexpr (is_variant_v<encoded_type> && std::constructible_from<encoded_type, value_type>) {
+            return encoded_type{std::move(value)};
+        } else if constexpr (is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>) {
+            return encode_optional_move(std::move(value));
+        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+            if constexpr (requires {
+                              encoded_type{std::make_move_iterator(value.begin()),
+                                           std::make_move_iterator(value.end())};
+                          }) {
+                return encoded_type{std::make_move_iterator(value.begin()), std::make_move_iterator(value.end())};
+            } else if constexpr (requires { encoded_type{value.begin(), value.end()}; }) {
+                return encoded_type{value.begin(), value.end()};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to encode ranges value_type to encoded_type");
+            }
+        } else if constexpr (muesli::HasTupleSize<encoded_type> && muesli::HasTupleSize<value_type>) {
+            return encode_tuple_like_rvalue(std::move(value));
+        } else if constexpr (std::constructible_from<encoded_type, value_type>) {
+            return encoded_type{std::move(value)};
+        } else if constexpr (std::is_convertible_v<value_type, encoded_type>) {
+            return static_cast<encoded_type>(std::move(value));
+        } else {
+            static_assert(sizeof(value_type) == 0, "apply_codec: Unable to encode value_type to encoded_type");
+        }
+    }
+
+    /** @brief Decodes from encoded_type to value_type */
+    static constexpr value_type decode(const encoded_type& value) {
+        if constexpr (is_variant_v<encoded_type> && std::constructible_from<value_type, encoded_type>) {
+            return value_type{value};
+        } else if constexpr (is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>) {
+            return decode_optional(value);
+        } else if constexpr (muesli::HasTupleSize<encoded_type>) {
+            // If encoded_type is tuple-like, try to construct value_type from its elements via aggregate initialization
+            if constexpr (muesli::HasTupleSize<value_type>) {
+                return decode_tuple_like(value);
+            } else {
+                return std::apply(
+                    []<typename... Arg>(Arg&&... args) { return value_type{std::forward<Arg>(args)...}; }, value);
+            }
+        } else if constexpr (std::constructible_from<value_type, encoded_type>) {
+            return value_type{value};
+        } else if constexpr (std::is_convertible_v<encoded_type, value_type>) {
+            return static_cast<value_type>(value);
+        } else {
+            static_assert(sizeof(value_type) == 0, "apply_codec: Unable to decode encoded_type to value_type");
+        }
+    }
+
+private:
+    template<typename VT = value_type>
+    constexpr encoded_type encode_tuple_like_lvalue(const VT& value) const
+        requires (muesli::HasTupleSize<encoded_type> && muesli::HasTupleSize<VT>)
+    {
+        constexpr std::size_t N = std::tuple_size_v<std::remove_cvref_t<encoded_type>>;
+        if constexpr (HasTupleGetUpTo<VT, N>) {
+            return std::apply([]<typename... Arg>(Arg&&... args) { return encoded_type{std::forward<Arg>(args)...}; },
+                              value);
+        } else if constexpr (std::constructible_from<encoded_type, VT>) {
+            return encoded_type{value};
+        } else if constexpr (std::is_convertible_v<VT, encoded_type>) {
+            return static_cast<encoded_type>(value);
+        } else {
+            static_assert(sizeof(VT) == 0, "apply_codec: Unable to encode value_type to encoded_type");
+        }
+    }
+
+    template<typename VT = value_type>
+    constexpr encoded_type encode_tuple_like_rvalue(VT&& value) const
+        requires (muesli::HasTupleSize<encoded_type> && muesli::HasTupleSize<VT>)
+    {
+        constexpr std::size_t N = std::tuple_size_v<std::remove_cvref_t<encoded_type>>;
+        if constexpr (HasTupleGetUpTo<VT, N>) {
+            return std::apply([]<typename... Arg>(Arg&&... args) { return encoded_type{std::forward<Arg>(args)...}; },
+                              std::forward<VT>(value));
+        } else if constexpr (std::constructible_from<encoded_type, VT>) {
+            return encoded_type{std::forward<VT>(value)};
+        } else if constexpr (std::is_convertible_v<VT, encoded_type>) {
+            return static_cast<encoded_type>(std::forward<VT>(value));
+        } else {
+            static_assert(sizeof(VT) == 0, "apply_codec: Unable to encode value_type to encoded_type");
+        }
+    }
+
+    template<typename ET = encoded_type>
+    static constexpr value_type decode_tuple_like(const ET& value)
+        requires (muesli::HasTupleSize<ET> && muesli::HasTupleSize<value_type>)
+    {
+        return std::apply([]<typename... Arg>(Arg&&... args) { return value_type{std::forward<Arg>(args)...}; }, value);
+    }
+
+    static constexpr encoded_type encode_optional(const value_type& value) noexcept
+        requires is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>
+    {
+        if (!is_engaged_optional(value)) {
+            return std::nullopt;
+        }
+        return extract_optional_content<encoded_type>(value);
+    }
+
+    static constexpr encoded_type encode_optional_move(value_type&& value) noexcept
+        requires is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>
+    {
+        if (!is_engaged_optional(value)) {
+            return std::nullopt;
+        }
+        return extract_optional_content<encoded_type>(std::move(value));
+    }
+
+    static constexpr bool is_engaged_optional(const auto& value) noexcept {
+        if constexpr (HasHasValue<std::remove_cvref_t<decltype(value)>>) {
+            return value.has_value();
+        } else if constexpr (HasBoolConversion<std::remove_cvref_t<decltype(value)>>) {
+            return static_cast<bool>(value);
+        } else {
+            static_assert(sizeof(value) == 0, "apply_codec: Value type has no optional check");
+        }
+    }
+
+    template<typename TargetType>
+    static constexpr TargetType extract_optional_content(auto&& value) noexcept {
+        if constexpr (requires { *std::forward<decltype(value)>(value); }) {
+            return TargetType(*std::forward<decltype(value)>(value));
+        } else {
+            return TargetType(std::forward<decltype(value)>(value));
+        }
+    }
+
+    static constexpr value_type decode_optional(const encoded_type& value) noexcept requires is_optional_v<encoded_type>
+    {
+        using inner_type = typename encoded_type::value_type;
+
+        auto make_empty = [&]() -> value_type {
+            if constexpr (HasNulloptConstructible<value_type>) {
+                return value_type{std::nullopt};
+            } else if constexpr (std::default_initializable<value_type>) {
+                return value_type{};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to decode disengaged optional encoded_type to value_type");
+            }
+        };
+
+        auto make_from_value = [&]() -> value_type {
+            if constexpr (requires { *value; }) {
+                return value_type(*value);
+            } else if constexpr (std::constructible_from<value_type, inner_type>) {
+                return value_type{*value};
+            } else if constexpr (std::constructible_from<value_type, encoded_type>) {
+                return value_type{value};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to decode engaged optional encoded_type to value_type");
+            }
+        };
+
+        if (!value.has_value()) {
+            if constexpr (HasOptionalValueCheck<value_type> || HasNulloptConstructible<value_type> ||
+                          std::default_initializable<value_type>) {
+                return make_empty();
+            } else if constexpr (std::constructible_from<value_type, encoded_type>) {
+                return value_type{value};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to decode optional encoded_type to value_type");
+            }
+        } else {
+            if constexpr (HasOptionalValueCheck<value_type>) {
+                return make_from_value();
+            } else if constexpr (std::constructible_from<value_type, encoded_type>) {
+                return value_type{value};
+            } else {
+                return make_from_value();
+            }
+        }
+    }
+};
+
+/**
+ * @brief Helper to construct an apply_codec for a specific ValueType.
+ * @tparam ValueType The target type to construct
+ * @tparam ElementCodec The codec to adapt
+ */
+template<typename ValueType, Codec ElementCodec>
+constexpr auto construct_as(const ElementCodec& elem) {
+    return apply_codec<ElementCodec, ValueType>{elem};
+}
+
+} // namespace muesli

@@ -1,0 +1,150 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/identity_codec>
+
+namespace muesli {
+
+/**
+ * Codec for int values.
+ *
+ * Identity codec for platform int; handy for IDs and counters.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<int> int_codec{};
+/**
+ * Codec for long values.
+ *
+ * Identity codec for long; useful when ABI requires long width.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<long> long_codec{};
+/**
+ * Codec for long long values.
+ *
+ * Identity codec for long long; common for large counters/timestamps.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<long long> long_long_codec{};
+/**
+ * Codec for unsigned int values.
+ *
+ * Identity codec for unsigned int; good for sizes and flags.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<unsigned int> unsigned_int_codec{};
+/**
+ * Codec for unsigned long values.
+ *
+ * Identity codec for unsigned long; often used for platform-sized counts.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<unsigned long> unsigned_long_codec{};
+/**
+ * Codec for unsigned long long values.
+ *
+ * Identity codec for unsigned long long; useful for large IDs and hashes.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<unsigned long long> unsigned_long_long_codec{};
+/**
+ * Codec for short values.
+ *
+ * Identity codec for short; suited to compact integer fields.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<short> short_codec{};
+/**
+ * Codec for unsigned short values.
+ *
+ * Identity codec for unsigned short; compact length/flag fields.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<unsigned short> unsigned_short_codec{};
+
+/**
+ * Codec for float values.
+ *
+ * Identity codec for single-precision floats; binary round-trip.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<float> float_codec{};
+/**
+ * Codec for double values.
+ *
+ * Identity codec for double-precision floats; binary round-trip.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<double> double_codec{};
+/**
+ * Codec for long double values.
+ *
+ * Identity codec for extended-precision floats when supported.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<long double> long_double_codec{};
+
+/**
+ * Codec for char values.
+ *
+ * Identity codec for char; encodes raw character byte.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<char> char_codec{};
+/**
+ * Codec for signed char values.
+ *
+ * Identity codec for signed char; explicit signedness control.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<signed char> signed_char_codec{};
+/**
+ * Codec for unsigned char values.
+ *
+ * Identity codec for unsigned char; common for raw bytes.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<unsigned char> unsigned_char_codec{};
+/**
+ * Codec for wchar_t values.
+ *
+ * Identity codec for wide characters; platform-dependent width.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<wchar_t> wchar_codec{};
+/**
+ * Codec for char8_t values.
+ *
+ * Identity codec for UTF-8 code units (C++20 char8_t).
+ * @see identity_codec
+ */
+inline constexpr identity_codec<char8_t> char8_codec{};
+/**
+ * Codec for char16_t values.
+ *
+ * Identity codec for UTF-16 code units.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<char16_t> char16_codec{};
+/**
+ * Codec for char32_t values.
+ *
+ * Identity codec for UTF-32 code units.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<char32_t> char32_codec{};
+
+/**
+ * Codec for bool values.
+ *
+ * Identity codec for bool; serializes boolean flags.
+ * @see identity_codec
+ */
+inline constexpr identity_codec<bool> bool_codec{};
+
+} // namespace muesli

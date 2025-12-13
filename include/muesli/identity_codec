@@ -1,0 +1,78 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief The simplest codec - passes values through unchanged
+ *
+ * The identity_codec is a no-op codec that encodes and decodes by simply
+ * returning the value as-is. This is useful as a building block for more
+ * complex codecs and as a codec for primitive types.
+ *
+ * Template parameters:
+ * - T: The type to encode/decode
+ *
+ * Example usage:
+ * ```cpp
+ * auto codec = muesli::identity_codec<int>();
+ * int value = 54;
+ * auto encoded = codec.encode(value);  // Returns 54
+ * auto decoded = codec.decode(encoded); // Returns 54
+ * ```
+ *
+ * @note This codec has zero overhead - encode and decode are inline no-ops.
+ * @note The identity_codec is header-only and constexpr-friendly.
+ */
+template<typename T>
+struct identity_codec : fluent::optionable<identity_codec<T>>,
+                        fluent::constrainable<identity_codec<T>>,
+                        fluent::projectable<identity_codec<T>>,
+                        fluent::transformable<identity_codec<T>>,
+                        fluent::nullableable<identity_codec<T>>,
+                        fluent::constructable<identity_codec<T>> {
+    /** @brief The type that this codec encodes and decodes */
+    using value_type = T;
+
+    /** @brief Returns itself as the next codec (identity operation) */
+    constexpr const identity_codec& next_codec() const noexcept {
+        return *this;
+    }
+
+    /** @brief Returns the value unchanged (rvalue overload) */
+    static constexpr value_type&& encode(value_type&& value) noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    /** @brief Returns the value unchanged (const lvalue overload) */
+    static constexpr const value_type& encode(const value_type& value) noexcept {
+        return value;
+    }
+
+    /** @brief Returns the value unchanged (rvalue overload) */
+    static constexpr value_type&& decode(value_type&& value) noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    /** @brief Returns the value unchanged (const lvalue overload) */
+    static constexpr const value_type& decode(const value_type& value) noexcept {
+        return value;
+    }
+};
+
+} // namespace muesli

@@ -1,0 +1,77 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+/** @brief Forward declaration of transform_codec */
+template<Codec InnerCodec, typename EncodeFn, typename DecodeFn, typename ValueType>
+struct transform_codec;
+}
+
+namespace muesli::fluent {
+
+/**
+ * @brief Mixin providing transformation methods (.transform(), .transform_input(), .transform_output())
+ *
+ * This mixin provides the following transformation capabilities:
+ * - .transform(encode_fn, decode_fn): Apply transforms to both directions
+ * - .transform_input(decode_fn): Only transform during deserialisation
+ * - .transform_output(encode_fn): Only transform during serialisation
+ *
+ * Example:
+ * ```cpp
+ * auto codec = muesli::int32_codec
+ *     .transform([](int v) { return v * 2; },      // encode
+ *                [](int v) { return v / 2; });     // decode
+ * ```
+ */
+template<typename Derived>
+struct transformable {
+    /**
+     * @brief Applies bidirectional transformation to encode and decode
+     * @tparam EncodeFn Callable(value_type) -> encoded_type
+     * @tparam DecodeFn Callable(encoded_type) -> value_type
+     * @param enc Transform to apply during encoding
+     * @param dec Transform to apply during decoding
+     * @return A transform_codec wrapping this codec
+     */
+    template<typename EncodeFn, typename DecodeFn>
+    constexpr auto transform(EncodeFn enc, DecodeFn dec) const requires Codec<Derived> {
+        using value_type = std::invoke_result_t<DecodeFn, typename Derived::value_type>;
+        return muesli::transform_codec<Derived, std::decay_t<EncodeFn>, std::decay_t<DecodeFn>, value_type>{
+            static_cast<const Derived&>(*this),
+            std::move(enc),
+            std::move(dec)
+        };
+    }
+
+    /**
+     * @brief Transforms only during deserialisation (decode)
+     * @tparam DecodeFn Callable(encoded_type) -> value_type
+     * @param dec Transform to apply during decoding
+     * @return A transform_codec wrapping this codec
+     */
+    template<typename DecodeFn>
+    constexpr auto transform_input(DecodeFn dec) const requires Codec<Derived> {
+        return transform([](auto&& v) { return std::forward<decltype(v)>(v); }, std::move(dec));
+    }
+
+    /**
+     * @brief Transforms only during serialisation (encode)
+     * @tparam EncodeFn Callable(value_type) -> encoded_type
+     * @param enc Transform to apply during encoding
+     * @return A transform_codec wrapping this codec
+     */
+    template<typename EncodeFn>
+    constexpr auto transform_output(EncodeFn enc) const requires Codec<Derived> {
+        return transform(std::move(enc), [](auto&& v) { return std::forward<decltype(v)>(v); });
+    }
+};
+
+} // namespace muesli::fluent

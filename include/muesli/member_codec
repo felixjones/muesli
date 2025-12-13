@@ -1,0 +1,114 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+#include <muesli/util/type_traits>
+
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for extracting values from struct members.
+ *
+ * The member_codec binds a field codec to a specific struct member pointer,
+ * extracting/applying values to that member during encode/decode operations.
+ *
+ * @tparam FieldCodec The codec for the member field type
+ * @tparam MemberPtr Pointer-to-member of form &OwnerType::memberName
+ *
+ * Example:
+ * ```cpp
+ * struct Person { int id; std::string name; };
+ * auto codec = tuple_codec(
+ *     int_codec.member<&Person::id>(),
+ *     string_codec.member<&Person::name>()
+ * );
+ * ```
+ */
+template<Codec FieldCodec, auto MemberPtr>
+struct member_codec : fluent::optionable<member_codec<FieldCodec, MemberPtr>>,
+                      fluent::constrainable<member_codec<FieldCodec, MemberPtr>>,
+                      fluent::transformable<member_codec<FieldCodec, MemberPtr>>,
+                      fluent::constructable<member_codec<FieldCodec, MemberPtr>> {
+    /** @brief Traits extracted from the member pointer */
+    using traits = member_pointer_traits<decltype(MemberPtr)>;
+    /** @brief The owner type that contains this member */
+    using owner_type = typename traits::owner_type;
+    /** @brief The member's type */
+    using value_type = typename traits::member_type;
+    /** @brief The next codec in the encoding chain */
+    using next_codec_type = std::decay_t<decltype(std::declval<FieldCodec>().next_codec())>;
+    /** @brief The field codec's value type */
+    using field_value_type = typename FieldCodec::value_type;
+    /** @brief The transport type produced by the next codec */
+    using transport_type = typename next_codec_type::value_type;
+
+    static_assert(std::same_as<value_type, field_value_type>,
+                  "member_codec: FieldCodec's value_type must match member_type");
+
+    /** @brief The codec used for encoding/decoding the member value */
+    FieldCodec field_codec;
+
+    /** @brief Constructs a member_codec with the given field codec */
+    explicit constexpr member_codec(const FieldCodec& codec) noexcept : field_codec(codec) {}
+
+    /** @brief Returns the next codec in the encoding chain */
+    constexpr next_codec_type next_codec() const noexcept {
+        return field_codec.next_codec();
+    }
+
+    /** @brief Encodes the member value using the field codec */
+    constexpr transport_type encode(const value_type& value) const noexcept {
+        return field_codec.encode(value);
+    }
+
+    /** @brief Encodes the member value using the field codec (rvalue overload) */
+    constexpr transport_type encode(value_type&& value) const noexcept {
+        return field_codec.encode(std::move(value));
+    }
+
+    /** @brief Decodes the transport value back to the member value */
+    constexpr value_type decode(const transport_type& value) const noexcept {
+        return field_codec.decode(value);
+    }
+
+    /** @brief Decodes the transport value back to the member value (rvalue overload) */
+    constexpr value_type decode(transport_type&& value) const noexcept {
+        return field_codec.decode(std::move(value));
+    }
+
+    /** @brief Projects an owning object to extract the member value */
+    constexpr value_type project(const owner_type& obj) const noexcept {
+        if constexpr (std::is_member_function_pointer_v<decltype(MemberPtr)>) {
+            return (obj.*MemberPtr)();
+        } else {
+            return obj.*MemberPtr;
+        }
+    }
+};
+
+
+/**
+ * @brief Helper function to create a member_codec
+ * @tparam MemberPtr Pointer to member variable or function
+ * @param elem The codec for the member
+ * @return A member_codec for the specified member
+ */
+template<auto MemberPtr, Codec ElementCodec>
+constexpr auto member_of(const ElementCodec& elem) {
+    return member_codec<ElementCodec, MemberPtr>{elem};
+}
+
+} // namespace muesli

@@ -1,0 +1,57 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+namespace muesli {
+/** @brief Forward declaration of make_nullable for non-pointer storage */
+template<typename Storage, typename InnerCodec>
+constexpr auto make_nullable(const InnerCodec& inner);
+
+/** @brief Forward declaration of make_nullable with template template parameter */
+template<template<typename...> class StorageTemplate, typename InnerCodec>
+constexpr auto make_nullable(const InnerCodec& inner);
+} // namespace muesli
+
+namespace muesli::fluent {
+/**
+ * @brief Mixin providing .nullable<>() to support nullable storage types
+ *
+ * This mixin provides the .nullable<Storage>() method for wrapping codecs
+ * to work with nullable types like std::shared_ptr, std::unique_ptr, std::optional,
+ * and raw pointers.
+ *
+ * Example:
+ * ```cpp
+ * auto codec = muesli::vector_codec(...)
+ *     .nullable<std::shared_ptr>();
+ * std::shared_ptr<std::vector<int>> ptr = ...;
+ * auto encoded = codec.encode(ptr);
+ * ```
+ */
+template<typename Derived>
+struct nullableable {
+    /**
+     * @brief Wraps codec to support a nullable storage type
+     * @tparam Storage The nullable storage type (std::shared_ptr<T>, std::optional<T>, etc)
+     * @return A nullable_codec wrapping this codec
+     */
+    template<typename Storage>
+    constexpr auto nullable() const {
+        return muesli::make_nullable<Storage>(static_cast<const Derived&>(*this));
+    }
+
+    /**
+     * @brief Wraps codec to support a nullable storage template
+     * @tparam StorageTemplate The nullable storage template (std::shared_ptr, std::optional, etc)
+     * @return A nullable_codec wrapping this codec
+     */
+    template<template<typename...> class StorageTemplate>
+    constexpr auto nullable() const {
+        return muesli::make_nullable<StorageTemplate>(static_cast<const Derived&>(*this));
+    }
+};
+} // namespace muesli::fluent

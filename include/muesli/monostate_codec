@@ -1,0 +1,38 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/constant_codec>
+
+#include <variant>
+
+namespace muesli {
+
+/**
+ * @brief Codec for std::monostate (empty variant state).
+ *
+ * Encodes and decodes std::monostate, the empty state type used in std::variant.
+ * Useful as a placeholder codec when representing absence of data, particularly
+ * in optional or nullable contexts where no actual value needs to be encoded.
+ *
+ * @note This is a constant codec - it always returns the same monostate value.
+ * @note Commonly used internally by optional_codec and nullable_codec.
+ *
+ * @see constant_codec
+ * @see optional_codec
+ * @see nullable_codec
+ *
+ * @code
+ * // Used internally by optional_codec to represent absent values
+ * auto opt_codec = muesli::int32_codec.optional();
+ * std::optional<int32_t> absent = std::nullopt;
+ * auto encoded = opt_codec.encode(absent);  // Uses monostate_codec for the empty variant
+ * @endcode
+ */
+inline constexpr constant_codec<std::monostate> monostate_codec{};
+
+} // namespace muesli

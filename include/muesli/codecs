@@ -1,0 +1,44 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+// Fundamental type codecs
+#include <muesli/fundamental_codecs>
+#include <muesli/stddef_codecs>
+#include <muesli/stdint_codecs>
+
+// String codecs
+#include <muesli/string_codecs>
+
+// Container codecs
+#include <muesli/array_codec>
+#include <muesli/range_codec>
+#include <muesli/vector_codec>
+
+// Composite codecs
+#include <muesli/nullable_codec>
+#include <muesli/optional_codec>
+#include <muesli/tuple_codec>
+#include <muesli/variant_codec>
+
+// Transformation codecs
+#include <muesli/constrained_codec>
+#include <muesli/delimited_codec>
+#include <muesli/transform_codec>
+
+// Application codecs
+#include <muesli/apply_codec>
+#include <muesli/member_codec>
+#include <muesli/projector_codec>
+
+// Special codecs
+#include <muesli/constant_codec>
+#include <muesli/identity_codec>
+#include <muesli/monostate_codec>
+
+// Varint codecs
+#include <muesli/varint_codecs>

@@ -1,0 +1,164 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/identity_codec>
+
+#include <cstdint>
+
+namespace muesli {
+
+/**
+ * Codec for std::int8_t values.
+ *
+ * Identity codec that encodes/decodes 8-bit signed integers without transformation.
+ * Useful for byte-level formats where exact width matters.
+ *
+ * @code
+ * auto encoded = int8_codec.encode(static_cast<std::int8_t>(-42));
+ * auto decoded = int8_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::int8_t> int8_codec{};
+
+/**
+ * Codec for std::uint8_t values.
+ *
+ * Identity codec for 8-bit unsigned integers. Ideal for raw byte payloads.
+ *
+ * @code
+ * auto encoded = uint8_codec.encode(static_cast<std::uint8_t>(0xAB));
+ * auto decoded = uint8_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uint8_t> uint8_codec{};
+
+/**
+ * Codec for std::int16_t values.
+ *
+ * Identity codec for 16-bit signed integers (network fields, small counters).
+ *
+ * @code
+ * auto encoded = int16_codec.encode(static_cast<std::int16_t>(12345));
+ * auto decoded = int16_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::int16_t> int16_codec{};
+
+/**
+ * Codec for std::uint16_t values.
+ *
+ * Identity codec for 16-bit unsigned integers (length prefixes, flags).
+ *
+ * @code
+ * auto encoded = uint16_codec.encode(static_cast<std::uint16_t>(65535));
+ * auto decoded = uint16_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uint16_t> uint16_codec{};
+
+/**
+ * Codec for std::int32_t values.
+ *
+ * Identity codec for 32-bit signed integers. Common for IDs and counters.
+ *
+ * @code
+ * auto encoded = int32_codec.encode(123'456); // int32_t literal
+ * auto decoded = int32_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::int32_t> int32_codec{};
+
+/**
+ * Codec for std::uint32_t values.
+ *
+ * Identity codec for 32-bit unsigned integers (sizes, hashes, bitmasks).
+ *
+ * @code
+ * auto encoded = uint32_codec.encode(0xDEADBEEF_u32);
+ * auto decoded = uint32_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uint32_t> uint32_codec{};
+
+/**
+ * Codec for std::int64_t values.
+ *
+ * Identity codec for 64-bit signed integers (timestamps, large counters).
+ *
+ * @code
+ * auto encoded = int64_codec.encode(1'000'000'000LL);
+ * auto decoded = int64_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::int64_t> int64_codec{};
+
+/**
+ * Codec for std::uint64_t values.
+ *
+ * Identity codec for 64-bit unsigned integers (IDs, checksums, sizes).
+ *
+ * @code
+ * auto encoded = uint64_codec.encode(0xFFFFFFFFFFFFFFFFULL);
+ * auto decoded = uint64_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uint64_t> uint64_codec{};
+
+/**
+ * Codec for the widest signed integer type (std::intmax_t).
+ *
+ * Identity codec for platforms where maximum signed width is needed.
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::intmax_t> intmax_codec{};
+
+/**
+ * Codec for the widest unsigned integer type (std::uintmax_t).
+ *
+ * Identity codec for maximum-width unsigned values.
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uintmax_t> uintmax_codec{};
+
+/**
+ * Codec for pointer-sized signed integers (std::intptr_t).
+ *
+ * Identity codec suited for pointer arithmetic results.
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::intptr_t> intptr_codec{};
+
+/**
+ * Codec for pointer-sized unsigned integers (std::uintptr_t).
+ *
+ * Identity codec suitable for serialising pointer-like values as integers.
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::uintptr_t> uintptr_codec{};
+
+} // namespace muesli

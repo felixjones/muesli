@@ -1,0 +1,108 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/range_codec>
+#include <muesli/util/concepts>
+#include <muesli/util/range_holder>
+
+#include <array>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for fixed-size arrays.
+ *
+ * The array_codec handles std::array<T, N> by encoding it as a sequence
+ * of element-encoded values. The size is compile-time known, so no size
+ * prefix is encoded - just the sequence of elements.
+ *
+ * @tparam ElementCodec Codec for individual array elements
+ * @tparam N Compile-time array size
+ *
+ * Useful for:
+ * - Fixed-size buffers or data structures
+ * - Protocol message headers with fixed fields
+ * - Hash values
+ * - Coordinate tuples or vectors
+ *
+ * @code
+ * // Encode/decode a 3D coordinate as an array
+ * auto coords = array_codec<3>(float_codec);
+ * std::array<float, 3> position = {1.5f, 2.5f, 3.5f};
+ * auto encoded = coords.encode(position);
+ *
+ * // Use with constraints (array elements must be positive)
+ * auto positive_coords = coords.constrain([](const auto& arr) {
+ *     return std::all_of(arr.begin(), arr.end(), [](float v) { return v > 0; });
+ * });
+ *
+ * // Use with optional for sparse data
+ * auto optional_coords = coords.optional();
+ * std::optional<std::array<float, 3>> maybe_pos = position;
+ * @endcode
+ */
+template<Codec ElementCodec, std::size_t N>
+struct array_codec : fluent::optionable<array_codec<ElementCodec, N>>,
+                     fluent::constrainable<array_codec<ElementCodec, N>>,
+                     fluent::transformable<array_codec<ElementCodec, N>>,
+                     fluent::projectable<array_codec<ElementCodec, N>>,
+                     fluent::constructable<array_codec<ElementCodec, N>>,
+                     fluent::nullableable<array_codec<ElementCodec, N>> {
+    /** @brief Value type is a fixed-size array of element values */
+    using value_type = std::array<typename ElementCodec::value_type, N>;
+    /** @brief The next codec in the chain is a range_codec */
+    using next_codec_type = range_codec<ElementCodec>;
+    /** @brief Encoded type produced by the range_codec */
+    using encoded_type = typename next_codec_type::value_type;
+
+    /** @brief Codec for encoding/decoding individual array elements */
+    ElementCodec element_codec;
+
+    /** @brief Constructs an array_codec with the given element codec */
+    explicit constexpr array_codec(const ElementCodec& codec) noexcept : element_codec(codec) {}
+
+    /** @brief Returns the next codec in the encoding chain */
+    constexpr next_codec_type next_codec() const noexcept {
+        return range_codec(element_codec);
+    }
+
+    /** @brief Encodes an array as a range */
+    static constexpr encoded_type encode(const value_type& value) noexcept {
+        return encoded_type(value);
+    }
+
+    /** @brief Decodes a range back into a fixed-size array */
+    static constexpr value_type decode(const encoded_type& value) noexcept {
+        value_type result{};
+        std::size_t i = 0;
+        for (auto&& elem : value) {
+            result[i] = elem;
+            ++i;
+        }
+        return result;
+    }
+};
+
+/** @brief Helper function to create an array_codec with deduced element type
+ * @tparam N The size of the array
+ * @param elem The codec for array elements
+ * @return An array_codec configured for arrays of size N
+ */
+template<std::size_t N, Codec ElementCodec>
+constexpr auto array_of(const ElementCodec& elem) {
+    return array_codec<ElementCodec, N>{elem};
+}
+
+} // namespace muesli

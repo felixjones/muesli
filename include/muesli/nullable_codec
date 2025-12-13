@@ -1,0 +1,219 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/optional_codec>
+#include <muesli/range_codec>
+#include <muesli/transform_codec>
+
+#include <memory>
+#include <optional>
+#include <type_traits>
+
+namespace muesli {
+
+/**
+ * @brief Creates a nullable codec for smart pointers and optional-like types
+ * @tparam Storage The storage type (std::shared_ptr, std::unique_ptr, std::optional, etc.)
+ * @tparam InnerCodec The codec for the contained value
+ * @param inner The codec to use for the contained value
+ * @return A codec that encodes/decodes nullable storage types
+ *
+ * Encodes nullptr/nullopt as absent optional values. Non-null values are encoded
+ * using the inner codec and reconstructed on decode.
+ */
+template<typename Storage, Codec InnerCodec>
+requires(!std::is_pointer_v<Storage>)
+constexpr auto make_nullable(const InnerCodec& inner) {
+    using inner_value_t = typename InnerCodec::value_type;
+
+    return optional_codec(inner).transform(
+        // Encode: Storage -> std::optional<inner_value_t>
+        [](const Storage& s) -> std::optional<inner_value_t> {
+            if constexpr (requires { s.get(); }) {
+                if (!s.get())
+                    return std::nullopt;
+                return *s;
+            } else if constexpr (std::is_pointer_v<Storage>) {
+                if (!s)
+                    return std::nullopt;
+                return *s;
+            } else {
+                if (!s.has_value())
+                    return std::nullopt;
+                return *s;
+            }
+        },
+        // Decode: std::optional<inner_value_t> -> Storage
+        [](std::optional<inner_value_t>&& opt) -> Storage {
+            if (!opt.has_value()) {
+                return Storage{};
+            }
+            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_t>>) {
+                return std::make_shared<inner_value_t>(std::move(*opt));
+            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_t>>) {
+                return std::make_unique<inner_value_t>(std::move(*opt));
+            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_t>>) {
+                return std::move(opt);
+            } else {
+                return Storage(std::move(*opt));
+            }
+        });
+}
+
+/**
+ * @brief Creates a nullable codec for raw pointer types (requires allocator)
+ * @tparam Storage The raw pointer type
+ * @tparam InnerCodec The codec for the pointed-to value
+ * @tparam Allocator The allocator type for constructing pointed-to values
+ * @param inner The codec to use for the pointed-to value
+ * @param alloc The allocator to use when constructing decoded values
+ * @return A codec that encodes/decodes nullable pointer types
+ *
+ * For raw pointers, an allocator must be provided to construct the pointed-to
+ * value during decoding. nullptr is encoded as absent optional values.
+ */
+template<typename Storage, Codec InnerCodec, typename Allocator>
+requires std::is_pointer_v<Storage>
+constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
+    using inner_value_t = typename InnerCodec::value_type;
+
+    return optional_codec(inner).transform(
+        // Encode: Storage -> std::optional<inner_value_t>
+        [](const Storage& s) -> std::optional<inner_value_t> {
+            if (!s)
+                return std::nullopt;
+            return *s;
+        },
+        // Decode: std::optional<inner_value_t> -> Storage
+        [alloc](std::optional<inner_value_t>&& opt) mutable -> Storage {
+            if (!opt.has_value()) {
+                return nullptr;
+            }
+            auto* ptr = alloc.allocate(1);
+            if (!ptr)
+                return nullptr;
+            try {
+                alloc.construct(ptr, std::move(*opt));
+                return ptr;
+            } catch (...) {
+                alloc.deallocate(ptr, 1);
+                throw;
+            }
+        });
+}
+
+/**
+ * @brief Creates a nullable codec with template template parameter (deduced type)
+ * @tparam StorageTemplate Template like std::shared_ptr or std::optional
+ * @tparam InnerCodec The codec for the contained value
+ * @param inner The codec to use for the contained value
+ * @return A codec for the storage type with deduced inner type
+ *
+ * Example: make_nullable<std::shared_ptr>(int_codec) creates a codec for std::shared_ptr<int>
+ */
+template<template<typename...> class StorageTemplate, Codec InnerCodec>
+constexpr auto make_nullable(const InnerCodec& inner) {
+    using inner_value_t = typename InnerCodec::value_type;
+    return make_nullable<StorageTemplate<inner_value_t>>(inner);
+}
+
+/**
+ * @brief Creates a nullable codec with template template parameter and allocator
+ * @tparam StorageTemplate Template like std::shared_ptr or std::optional
+ * @tparam InnerCodec The codec for the contained value
+ * @tparam Allocator The allocator type
+ * @param inner The codec to use for the contained value
+ * @param alloc The allocator to use
+ * @return A codec for the storage type with deduced inner type
+ */
+template<template<typename...> class StorageTemplate, Codec InnerCodec, typename Allocator>
+constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
+    using inner_value_t = typename InnerCodec::value_type;
+    return make_nullable<StorageTemplate<inner_value_t>>(inner, alloc);
+}
+
+/**
+ * @brief Creates a nullable codec that treats empty ranges as null
+ * @tparam Storage The storage type (must contain a range)
+ * @tparam InnerCodec The codec for the range
+ * @param inner The codec to use for the range
+ * @return A codec that treats empty ranges as null
+ *
+ * Unlike regular make_nullable, this encodes empty ranges as empty (not as optional absent).
+ * This saves bytes when encoding empty containers as they're encoded the same as nullptr.
+ */
+template<typename Storage, Codec InnerCodec>
+requires(!std::is_pointer_v<Storage>)
+constexpr auto make_nullable_range(const InnerCodec& inner) {
+    using inner_value_t = typename InnerCodec::value_type;
+
+    return inner.transform(
+        // Encode: Storage -> inner_value_t
+        [](const Storage& s) -> inner_value_t {
+            if constexpr (requires { s.get(); }) {
+                if (!s.get()) {
+                    // nullptr -> empty container
+                    return inner_value_t{};
+                }
+                return *s;
+            } else if constexpr (requires { *s; }) {
+                // Raw pointer-like syntax
+                if (!s) {
+                    return inner_value_t{};
+                }
+                return *s;
+            } else if constexpr (requires { s.has_value(); }) {
+                // Optional-like
+                if (!s.has_value()) {
+                    return inner_value_t{};
+                }
+                return *s;
+            } else {
+                // Direct value
+                return s;
+            }
+        },
+        // Decode: inner_value_t -> Storage
+        [](inner_value_t&& range) -> Storage {
+            bool is_empty = false;
+            if constexpr (requires { range.empty(); }) {
+                is_empty = range.empty();
+            } else if constexpr (requires { range.size(); }) {
+                is_empty = (range.size() == 0);
+            }
+
+            if (is_empty) {
+                // Empty range -> null/default Storage
+                return Storage{};
+            }
+
+            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_t>>) {
+                return std::make_shared<inner_value_t>(std::move(range));
+            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_t>>) {
+                return std::make_unique<inner_value_t>(std::move(range));
+            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_t>>) {
+                return std::optional<inner_value_t>(std::move(range));
+            } else {
+                return Storage(std::move(range));
+            }
+        });
+}
+
+/**
+ * @brief Creates a nullable range codec with template template parameter (deduced type)
+ * @tparam StorageTemplate Template like std::shared_ptr or std::optional
+ * @tparam InnerCodec The codec for the range
+ * @param inner The codec to use for the range
+ * @return A codec for the storage type with deduced inner type
+ */
+template<template<typename...> class StorageTemplate, Codec InnerCodec>
+constexpr auto make_nullable_range(const InnerCodec& inner) {
+    using inner_value_t = typename InnerCodec::value_type;
+    return make_nullable_range<StorageTemplate<inner_value_t>>(inner);
+}
+} // namespace muesli

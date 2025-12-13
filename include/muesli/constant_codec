@@ -1,0 +1,125 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/transformable>
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+
+/** @brief Forward declaration of constrained_codec */
+template<Codec InnerCodec, typename Predicate>
+struct constrained_codec;
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for constant values with compile-time enforcement.
+ *
+ * The constant_codec encodes/decodes a single constant value of type T.
+ * The encoded value is always the constant, ignoring input during encoding.
+ * Useful for fixed header fields, protocol magic bytes, version markers,
+ * or sentinel values that don't vary across instances.
+ *
+ * @tparam T The constant value type
+ * @tparam ConstantValue The compile-time constant value (default: T{})
+ *
+ * Useful for:
+ * - Protocol magic numbers/signatures
+ * - Fixed version fields
+ * - Sentinel/marker values
+ * - Default/zero padding
+ * - Fixed-size null/empty markers
+ *
+ * @code
+ * // Protocol header with magic number
+ * const uint32_t PROTOCOL_MAGIC = 0xDEADBEEF;
+ * auto magic = constant_codec<uint32_t, PROTOCOL_MAGIC>();
+ * auto encoded = magic.encode(0);           // Always returns 0xDEADBEEF
+ * auto decoded = magic.decode(0xDEADBEEF); // Always returns 0xDEADBEEF
+ *
+ * // Version marker (always encodes as 1)
+ * auto version = constant_codec<uint8_t, 1>();
+ * auto header = tuple_codec(version, uint32_codec, string_codec);
+ * std::tuple<uint8_t, uint32_t, std::string> data = {1, 12345, "data"};
+ * auto encoded = header.encode(data);  // Version field is always encoded as 1
+ *
+ * // Validation: ensure received value matches expected constant
+ * auto validated_magic = magic.constrain();
+ * try {
+ *     auto decoded = validated_magic.decode(0xDEADBEEF);  // OK
+ *     auto bad_decoded = validated_magic.decode(0x12345678); // Throws!
+ * } catch (const std::invalid_argument&) {
+ *     // Handle protocol version/magic mismatch
+ * }
+ *
+ * // Empty/null marker
+ * auto null_marker = constant_codec<uint8_t, 0xFF>();
+ * std::optional<std::vector<int>> maybe_data;
+ * auto nullable_data = tuple_codec(null_marker, vector_codec(int32_codec));
+ * @endcode
+ *
+ * @note Encoding ignores input - always returns the constant value
+ * @note Decoding always returns the constant value
+ * @note Use .constrain() to add validation that input matches constant
+ */
+template<typename T, T ConstantValue = T{}>
+struct constant_codec : fluent::optionable<constant_codec<T, ConstantValue>>,
+                        fluent::transformable<constant_codec<T, ConstantValue>>,
+                        fluent::constructable<constant_codec<T, ConstantValue>> {
+    /** @brief The constant value this codec represents */
+    static constexpr auto value = ConstantValue;
+
+    /** @brief The type of the constant value */
+    using value_type = T;
+
+    /** @brief Returns itself as the next codec */
+    constexpr const constant_codec& next_codec() const noexcept {
+        return *this;
+    }
+
+    /** @brief Always returns the constant value, ignoring input */
+    static constexpr const value_type& encode(const value_type&) noexcept {
+        return value;
+    }
+
+    /** @brief Always returns the constant value, ignoring input */
+    static constexpr const value_type& decode(const value_type&) noexcept {
+        return value;
+    }
+
+    /**
+     * @brief Creates a constrained version that validates the constant value
+     * @return A constrained_codec that checks decoded values match the constant
+     */
+    constexpr auto constrain() const noexcept {
+        auto checking_pred = [](const value_type& v) { return v == ConstantValue; };
+        return constrained_codec<constant_codec<T, ConstantValue>, decltype(checking_pred)>{
+            *this,
+            std::move(checking_pred)
+        };
+    }
+
+    /**
+     * @brief Creates a constrained version with a custom predicate
+     * @param pred The predicate to validate values
+     * @return A constrained_codec with the given predicate
+     */
+    template<typename Predicate>
+    constexpr auto constrain(Predicate pred) const noexcept {
+        return constrained_codec<constant_codec<T, ConstantValue>, std::decay_t<Predicate>>{
+            *this,
+            std::move(pred)
+        };
+    }
+};
+
+} // namespace muesli
+
+#include <muesli/constrained_codec>

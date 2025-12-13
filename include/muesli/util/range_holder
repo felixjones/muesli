@@ -1,0 +1,297 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <ranges>
+#include <span>
+#include <stdexcept>
+#include <utility>
+#include <variant>
+
+namespace muesli {
+
+/**
+ * @brief Move-only generator function wrapper
+ *
+ * Wraps generator functions that return std::optional<T>.
+ * Uses type erasure to allow different generator function types.
+ *
+ * @tparam T The element type yielded by the generator
+ */
+template<typename T>
+struct move_only_generator {
+private:
+    struct callable_base {
+        virtual ~callable_base() = default;
+        virtual std::optional<T> invoke() = 0;
+    };
+
+    template<typename F>
+    struct callable_impl : callable_base {
+        F func;
+
+        explicit callable_impl(F&& f) : func(std::move(f)) {}
+
+        std::optional<T> invoke() override {
+            return func();
+        }
+    };
+
+    mutable std::unique_ptr<callable_base> m_callable;
+
+public:
+    /** @brief Default-constructs an empty generator that throws if invoked until assigned */
+    move_only_generator() = default;
+
+    /**
+     * @brief Constructs a generator from a callable yielding std::optional<T>
+     * @param f Callable invoked on each iteration to produce the next element
+     */
+    template<typename F>
+    move_only_generator(F&& f) : m_callable(std::make_unique<callable_impl<std::decay_t<F>>>(std::forward<F>(f))) {}
+
+    /** @brief Move-constructs, transferring generator ownership */
+    move_only_generator(move_only_generator&& other) noexcept {
+        m_callable = std::move(other.m_callable);
+    }
+
+    /** @brief Move-assigns, transferring generator ownership */
+    move_only_generator& operator=(move_only_generator&& other) noexcept {
+        m_callable = std::move(other.m_callable);
+        return *this;
+    }
+
+    /** @brief Deleted copy constructor to preserve move-only semantics */
+    move_only_generator(const move_only_generator&) = delete;
+    /** @brief Deleted copy assignment to preserve move-only semantics */
+    move_only_generator& operator=(const move_only_generator&) = delete;
+
+    /** @brief Invokes the underlying generator to produce the next element */
+    std::optional<T> operator()() const {
+        if (!m_callable) {
+            throw std::bad_function_call();
+        }
+        return m_callable->invoke();
+    }
+
+    /** @brief Returns true when a callable is present */
+    explicit operator bool() const noexcept {
+        return static_cast<bool>(m_callable);
+    }
+};
+
+/** @brief Holder for ranges that can be either owned or generated on-the-fly */
+template<typename T>
+struct range_holder {
+    using value_type = T;
+    using generator_type = move_only_generator<T>;
+
+    /** @brief Iterator for range_holder supporting both span and generator modes */
+    struct iterator {
+        using iterator_category = std::input_iterator_tag;
+        using difference_type = std::ptrdiff_t;
+        using value_type = T;
+        using pointer = const T*;
+        using reference = const T&;
+
+        /** @brief Default constructor */
+        iterator() = default;
+
+        /** @brief Span-based iterator constructor */
+        explicit iterator(typename std::span<const T>::iterator it) : m_type(Type::Span), m_span_it(it) {}
+
+        /** @brief Constructs a generator-backed iterator; optionally as end sentinel */
+        explicit iterator(generator_type& gen, bool is_end = false)
+            : m_type(is_end ? Type::GeneratorEnd : Type::Generator), m_generator(&gen), m_cached_value() {}
+
+        /** @brief Constructs a generator iterator with an initial cached value */
+        explicit iterator(generator_type& gen, std::optional<T> initial)
+            : m_type(initial.has_value() ? Type::Generator : Type::GeneratorEnd), m_generator(&gen),
+              m_cached_value(std::move(initial)) {}
+
+        /** @brief Dereference iterator to access current element */
+        reference operator*() const {
+            if (m_type == Type::Span) {
+                return *m_span_it;
+            } else if (m_type == Type::Generator) {
+                if (!m_cached_value.has_value()) {
+                    iterator end_sent(*m_generator, true);
+                    (void)(*this != end_sent);
+                }
+                if (m_type == Type::GeneratorEnd) {
+                    throw std::runtime_error("Dereferencing exhausted generator");
+                }
+                return *m_cached_value;
+            } else {
+                throw std::runtime_error("Dereferencing invalid or exhausted iterator");
+            }
+        }
+
+        /** @brief Arrow operator to access current element pointer */
+        pointer operator->() const {
+            return &(**this);
+        }
+
+        /** @brief Advance iterator to next element */
+        iterator& operator++() {
+            if (m_type == Type::Span) {
+                ++m_span_it;
+            } else if (m_type == Type::Generator) {
+                m_cached_value.reset();
+            }
+            return *this;
+        }
+
+        /** @brief Equality comparison between iterators */
+        bool operator==(const iterator& other) const {
+            if (m_type != other.m_type) {
+                return false;
+            }
+            if (m_type == Type::Span) {
+                return m_span_it == other.m_span_it;
+            } else {
+                // Both are generator-based
+                return (m_type == Type::GeneratorEnd) && (other.m_type == Type::GeneratorEnd);
+            }
+        }
+
+        /** @brief Inequality comparison between iterators */
+        bool operator!=(const iterator& other) const {
+            if (m_type == Type::Span) {
+                return !(*this == other);
+            }
+            if (m_type == Type::Generator && !m_cached_value.has_value()) {
+                auto result = (*m_generator)();
+                if (result.has_value()) {
+                    const_cast<iterator*>(this)->m_cached_value = std::move(result);
+                } else {
+                    const_cast<iterator*>(this)->m_type = Type::GeneratorEnd;
+                }
+            }
+            return !(*this == other);
+        }
+
+    private:
+        enum class Type { Span, Generator, GeneratorEnd };
+        Type m_type = Type::Span;
+        typename std::span<const T>::iterator m_span_it;
+        generator_type* m_generator = nullptr;
+        mutable std::optional<T> m_cached_value;
+    };
+
+    /** @brief Default-constructs an empty holder */
+    constexpr range_holder() = default;
+
+    /** @brief Move-constructs from another holder, taking its storage/generator */
+    constexpr range_holder(range_holder&& other) noexcept : m_data(std::move(other.m_data)) {}
+
+    /** @brief Move-assigns from another holder, taking its storage/generator */
+    constexpr range_holder& operator=(range_holder&& other) noexcept {
+        m_data = std::move(other.m_data);
+        return *this;
+    }
+
+    /** @brief Deleted copy constructor to enforce move-only semantics */
+    range_holder(const range_holder&) = delete;
+    /** @brief Deleted copy assignment to enforce move-only semantics */
+    range_holder& operator=(const range_holder&) = delete;
+
+    /**
+     * @brief Takes ownership of an rvalue range and exposes it via a generator
+     * @tparam R Movable range whose value_type matches T
+     * @param r Rvalue range to consume
+     */
+    template<std::ranges::range R>
+    requires std::same_as<std::ranges::range_value_t<R>, T> && std::is_rvalue_reference_v<R&&>
+    explicit range_holder(R&& r)
+        : m_data(std::in_place_type<generator_type>,
+                 [owned = std::decay_t<R>(std::forward<R>(r)), init = true, it = typename std::decay_t<R>::iterator{},
+                  end = typename std::decay_t<R>::iterator{}]() mutable -> std::optional<T> {
+                     if (init) {
+                         it = owned.begin();
+                         end = owned.end();
+                         init = false;
+                     }
+                     if (it != end) {
+                         return *it++;
+                     }
+                     return std::nullopt;
+                 }) {}
+
+    /** @brief Wraps a move-only generator directly */
+    constexpr explicit range_holder(generator_type&& gen) {
+        m_data = std::move(gen);
+    }
+
+    /**
+     * @brief Wraps a contiguous range by referencing its span (caller must keep it alive)
+     * @tparam R Contiguous range whose value_type matches T
+     * @param r Range to reference
+     */
+    template<std::ranges::contiguous_range R>
+    requires std::same_as<std::ranges::range_value_t<R>, T>
+    constexpr explicit range_holder(const R& r) : m_data(std::span<const T>(r.begin(), r.end())) {}
+
+    /**
+     * @brief Wraps a non-contiguous range via a generator (caller must keep it alive)
+     * @tparam R Non-contiguous range whose value_type matches T
+     * @param r Range to iterate over lazily
+     */
+    template<std::ranges::range R>
+    requires(!std::ranges::contiguous_range<R>) && std::same_as<std::ranges::range_value_t<R>, T>
+    explicit range_holder(const R& r) {
+        m_data = generator_type([it = r.begin(), end = r.end()]() mutable -> std::optional<T> {
+            if (it != end) {
+                return *it++;
+            }
+            return std::nullopt;
+        });
+    }
+
+    /** @brief Iterator to the first element (throws if holder is invalid) */
+    iterator begin() const {
+        if (m_data.valueless_by_exception()) {
+            throw std::logic_error("range_holder: begin() called on moved-from holder");
+        }
+        if (std::holds_alternative<std::span<const T>>(m_data)) {
+            return iterator(std::get<std::span<const T>>(m_data).begin());
+        } else {
+            auto& gen = std::get<generator_type>(m_data);
+            if (!gen) {
+                throw std::logic_error("range_holder: begin() called on moved-from generator");
+            }
+            // Prefetch first element to validate generator and cache it; exceptions propagate
+            auto first = gen();
+            return iterator(gen, std::move(first));
+        }
+    }
+
+    /** @brief Sentinel iterator representing end of the range */
+    iterator end() const {
+        if (m_data.valueless_by_exception()) {
+            throw std::logic_error("range_holder: end() called on moved-from holder");
+        }
+        if (std::holds_alternative<std::span<const T>>(m_data)) {
+            return iterator(std::get<std::span<const T>>(m_data).end());
+        } else {
+            auto& gen = std::get<generator_type>(m_data);
+            if (!gen) {
+                throw std::logic_error("range_holder: end() called on moved-from generator");
+            }
+            return iterator(gen, true);
+        }
+    }
+
+private:
+    mutable std::variant<std::span<const T>, generator_type> m_data;
+};
+
+} // namespace muesli

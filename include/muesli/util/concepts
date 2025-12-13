@@ -1,0 +1,277 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <concepts>
+#include <optional>
+#include <tuple>
+#include <utility>
+#include <variant>
+
+namespace muesli {
+
+/**
+ * @brief Trait to detect std::variant types
+ *
+ * Provides a type trait to check if a type is a std::variant.
+ * Useful for compile-time type checking and specialisation.
+ *
+ * @see is_variant_v for the value form
+ */
+template<typename>
+struct is_variant : std::false_type {};
+
+/**
+ * @brief Specialisation for std::variant types
+ *
+ * Specialisation that inherits from std::true_type for std::variant types.
+ */
+template<typename... Ts>
+struct is_variant<std::variant<Ts...>> : std::true_type {};
+
+/**
+ * @brief Value template for detecting std::variant types
+ *
+ * Convenient boolean constant to check if a type is a std::variant.
+ */
+template<typename T>
+inline constexpr bool is_variant_v = is_variant<T>::value;
+
+/**
+ * @brief Concept for types that can be converted to bool
+ *
+ * Requires types to support explicit conversion to bool, such as:
+ * - std::optional
+ * - std::unique_ptr / std::shared_ptr
+ * - Custom types with operator bool()
+ *
+ * @code
+ * struct Optional {
+ *     operator bool() const { return has_value; }
+ *     bool has_value = false;
+ * };
+ *
+ * static_assert(HasBoolConversion<Optional>);
+ * @endcode
+ */
+template<typename C>
+concept HasBoolConversion = requires(const C& c) {
+    { static_cast<bool>(c) } -> std::convertible_to<bool>;
+};
+
+/**
+ * @brief Concept for types with a has_value() method
+ *
+ * Requires types to provide a has_value() method that returns a boolean.
+ * Used for std::optional-like types.
+ *
+ * @code
+ * std::optional<int> opt = 42;
+ * static_assert(HasHasValue<decltype(opt)>);
+ * @endcode
+ */
+template<typename C>
+concept HasHasValue = requires(const C& c) {
+    { c.has_value() } -> std::convertible_to<bool>;
+};
+
+/**
+ * @brief Concept for optional-like types with value checking
+ *
+ * Composite concept that checks for either bool conversion OR has_value() method.
+ * Covers all common optional/nullable types:
+ * - std::optional<T>
+ * - std::shared_ptr<T>
+ * - std::unique_ptr<T>
+ * - Raw pointers
+ */
+template<typename C>
+concept HasOptionalValueCheck = HasBoolConversion<C> || HasHasValue<C>;
+
+/**
+ * @brief Concept for types with a value_type member
+ *
+ * Requires types to define a value_type member type.
+ * Typically used for container and codec types.
+ */
+template<typename C>
+concept HasValueType = requires { typename std::remove_cvref_t<C>::value_type; };
+
+/**
+ * @brief Concept for codecs with a next_codec() method
+ *
+ * Core requirement for codec types - they must provide a next_codec() method
+ * that returns the next codec in the encoding chain.
+ */
+template<typename C>
+concept HasNextCodec = requires(const C& codec) {
+    { codec.next_codec() };
+};
+
+/**
+ * @brief Concept for codecs that can encode rvalue references
+ *
+ * Requires codecs to accept an rvalue reference to their value_type
+ * and return the encoded type as an rvalue reference.
+ *
+ * @code
+ * template<typename C>
+ * requires CanEncodeRvalue<C>
+ * void encode_temp(const C& codec) {
+ *     typename C::value_type temp = ...;
+ *     auto encoded = codec.encode(std::move(temp));
+ * }
+ * @endcode
+ */
+template<typename C>
+concept CanEncodeRvalue = requires(const C& codec, typename std::remove_cvref_t<C>::value_type&& value) {
+    {
+        codec.encode(std::move(value))
+    } -> std::convertible_to<typename std::decay_t<decltype(codec.next_codec())>::value_type&&>;
+};
+
+/**
+ * @brief Concept for codecs that can encode const references
+ *
+ * Requires codecs to accept a const reference to their value_type
+ * and return the encoded type.
+ */
+template<typename C>
+concept CanEncodeConstRef = requires(const C& codec, const typename std::remove_cvref_t<C>::value_type& value) {
+    { codec.encode(value) } -> std::convertible_to<typename std::decay_t<decltype(codec.next_codec())>::value_type>;
+};
+
+/**
+ * @brief Concept for codecs that can decode rvalue references
+ *
+ * Requires codecs to accept an rvalue reference to their encoded_type
+ * and return the decoded value_type as an rvalue reference.
+ */
+template<typename C>
+concept CanDecodeRvalue =
+    requires(const C& codec, typename std::decay_t<decltype(codec.next_codec())>::value_type&& value) {
+        { codec.decode(std::move(value)) } -> std::convertible_to<typename std::remove_cvref_t<C>::value_type&&>;
+    };
+
+/**
+ * @brief Concept for codecs that can decode const references
+ *
+ * Requires codecs to accept a const reference to their encoded_type
+ * and return the decoded value_type.
+ */
+template<typename C>
+concept CanDecodeConstRef =
+    requires(const C& codec, const typename std::decay_t<decltype(codec.next_codec())>::value_type& value) {
+        { codec.decode(value) } -> std::convertible_to<typename std::remove_cvref_t<C>::value_type>;
+    };
+
+/**
+ * @brief Main Codec concept - defines the encoding/decoding interface
+ *
+ * The core concept that all codecs must match. Requires:
+ * - A value_type member for the type being encoded/decoded
+ * - A next_codec() method that returns the next codec in the chain
+ * - Ability to encode and decode values (either as rvalues or const references)
+ *
+ * This is the foundation for the entire muesli codec framework. Any type
+ * satisfying this concept can be used with all codec composition operations.
+ *
+ * @code
+ * // All of these satisfy the Codec concept:
+ * identity_codec<int>
+ * array_codec<identity_codec<int>, 3>
+ * optional_codec<identity_codec<int>>
+ * tuple_codec<identity_codec<int>, identity_codec<float>>
+ *
+ * static_assert(Codec<identity_codec<int>>);
+ * @endcode
+ *
+ * @see HasValueType
+ * @see HasNextCodec
+ * @see CanEncodeRvalue
+ * @see CanDecodeRvalue
+ */
+template<typename C>
+concept Codec = HasValueType<C> && HasNextCodec<C> &&
+                ((CanEncodeRvalue<C> && CanDecodeRvalue<C>) || (CanEncodeConstRef<C> && CanDecodeConstRef<C>));
+
+/**
+ * @brief Concept for types with a project() method that returns an encoded type
+ *
+ * Used by projector_codec to check if a type can project a value
+ * to the encoded representation.
+ */
+template<typename C, typename T>
+concept HasProjectToEncoded = requires(const C& c, const T& v) {
+    { c.project(v) } -> std::convertible_to<typename std::remove_cvref_t<C>::value_type>;
+};
+
+/**
+ * @brief Concept for types with a project() method given an owner type
+ *
+ * Checks if a codec can project from an owner type.
+ * Used by tuple_codec to verify all elements support projection.
+ */
+template<typename C, typename Owner>
+concept HasProjectFromOwner = requires(const C& c, const Owner& obj) {
+    { c.project(obj) };
+};
+
+/**
+ * @brief Helper trait for checking tuple element access
+ *
+ * Recursively checks if all elements of a tuple can be accessed via std::get.
+ * Used to verify tuple types are valid for tuple_codec.
+ */
+template<typename T, std::size_t I, std::size_t N>
+struct has_tuple_get_range {
+    static constexpr bool value = [] {
+        using std::get;
+        return requires { get<I>(std::declval<T&>()); };
+    }() && has_tuple_get_range<T, I + 1, N>::value;
+};
+
+/** @brief Specialisation to end the recursion for has_tuple_get_range */
+template<typename T, std::size_t N>
+struct has_tuple_get_range<T, N, N> : std::true_type {};
+
+/** @brief Concept for tuples that support get<0> through get<N-1> */
+template<typename T, std::size_t N>
+concept HasTupleGetUpTo = has_tuple_get_range<T, 0, N>::value;
+
+/** @brief Concept for types constructible from std::nullopt */
+template<typename C>
+concept HasNulloptConstructible = std::constructible_from<C, std::nullopt_t>;
+
+/** @brief Helper trait to check if type is constructible from all variant alternatives */
+/** @brief Trait to check if type is constructible from all variant alternatives */
+template<typename T, typename Variant>
+struct is_constructible_from_all_variant_alternatives;
+
+/** @brief Specialisation for std::variant */
+template<typename T, typename... Alternatives>
+struct is_constructible_from_all_variant_alternatives<T, std::variant<Alternatives...>> {
+    static constexpr bool value = (std::constructible_from<T, Alternatives> && ...);
+};
+
+/** @brief Concept for types constructible from all alternatives in a variant */
+template<typename T, typename Variant>
+concept ConstructibleFromAllVariantAlternatives =
+    is_variant_v<Variant> && is_constructible_from_all_variant_alternatives<T, Variant>::value;
+
+/**
+ * @brief Concept that detects presence of std::tuple_size specialisation
+ *
+ * Satisfied for tuple-like types (std::tuple, std::pair, etc.).
+ * Avoids instantiating tuple_size_v on non-tuples.
+ */
+template<typename T>
+concept HasTupleSize = requires {
+    { std::tuple_size<std::remove_cvref_t<T>>::value };
+};
+
+} // namespace muesli

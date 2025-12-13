@@ -1,0 +1,87 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+/** @brief Forward declaration of optional_codec */
+template<Codec InnerCodec>
+struct optional_codec;
+}
+
+namespace muesli::fluent {
+
+/**
+ * @brief Mixin providing .optional() method to wrap values in std::optional
+ *
+ * This mixin allows any codec to be transformed into a codec for std::optional<T>,
+ * where absent values are encoded as std::monostate in a variant. This is the
+ * foundation for optional field serialisation in formats.
+ *
+ * Encoding strategy:
+ * - Present value: encodes variant index 1 + encoded value
+ * - Absent value: encodes variant index 0 (monostate)
+ *
+ * @code
+ * // Simple optional field
+ * auto opt_int = muesli::int32_codec.optional();
+ * std::optional<int32_t> value = 42;
+ * auto encoded = opt_int.encode(value);       // Encodes as variant(1, 42)
+ * auto none_encoded = opt_int.encode(std::nullopt);  // Encodes as variant(0)
+ *
+ * // Optional in tuple
+ * auto record = muesli::tuple_codec(
+ *     string_codec,                // required name
+ *     int32_codec.optional(),      // optional age
+ *     string_codec.optional()      // optional email
+ * );
+ * std::tuple<std::string, std::optional<int>, std::optional<std::string>> person
+ *     = {"Alice", 30, std::nullopt};
+ * auto encoded = record.encode(person);
+ *
+ * // Optional with constraints
+ * auto positive_opt = int32_codec
+ *     .optional()
+ *     .constrain([](const auto& opt) {
+ *         if (!opt) return true;      // null is always valid
+ *         return *opt > 0;            // present value must be positive
+ *     });
+ *
+ * // Chaining with other mixins
+ * auto fancy = int32_codec
+ *     .optional()
+ *     .transform(
+ *         [](const auto& opt) { return opt.value_or(-1); },
+ *         [](int v) { return v == -1 ? std::nullopt : std::optional<int>(v); }
+ *     );
+ * @endcode
+ */
+template<typename Derived>
+struct optionable {
+    /**
+     * @brief Wraps this codec to encode/decode std::optional values
+     *
+     * Creates an optional_codec that represents the value type as std::optional.
+     * Absent values (std::nullopt) encode as variant index 0 (monostate).
+     * Present values encode as variant index 1 plus the encoded value.
+     *
+     * @return An optional_codec<Derived> wrapping this codec
+     *
+     * @code
+     * auto opt = my_codec.optional();
+     * std::optional<MyType> value = my_type_instance;
+     * auto encoded = opt.encode(value);
+     * @endcode
+     */
+    constexpr auto optional() const noexcept requires Codec<Derived>
+    {
+        return muesli::optional_codec<Derived>{static_cast<const Derived&>(*this)};
+    }
+};
+
+} // namespace muesli::fluent

@@ -1,0 +1,111 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+#include <muesli/util/type_traits>
+
+#include <functional>
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for projecting values from an owner type via custom lambda.
+ *
+ * The projector_codec allows encoding a derived/projected value from an owner object
+ * using a custom projection function, enabling flexible value extraction patterns.
+ *
+ * @tparam Owner The type containing the value to project
+ * @tparam FieldCodec The codec for the projected field type
+ * @tparam Projector Function taking const Owner& and returning the projected value
+ *
+ * Example:
+ * ```cpp
+ * struct Rectangle { int width, height; };
+ * auto area_codec = projector_codec<Rectangle>(
+ *     int_codec,
+ *     [](const Rectangle& r) { return r.width * r.height; }
+ * );
+ * ```
+ */
+template<typename Owner, Codec FieldCodec, typename Projector>
+struct projector_codec : fluent::optionable<projector_codec<Owner, FieldCodec, Projector>>,
+                         fluent::constrainable<projector_codec<Owner, FieldCodec, Projector>>,
+                         fluent::transformable<projector_codec<Owner, FieldCodec, Projector>>,
+                         fluent::constructable<projector_codec<Owner, FieldCodec, Projector>> {
+    /** @brief The owner type containing the value */
+    using owner_type = Owner;
+    /** @brief The projector function type */
+    using projector_type = Projector;
+    /** @brief Value type is the result of invoking the projector */
+    using value_type = std::invoke_result_t<Projector, const Owner&>;
+    /** @brief Next codec in the encoding chain */
+    using next_codec_type = std::decay_t<decltype(std::declval<FieldCodec>().next_codec())>;
+    /** @brief Encoded type from the next codec */
+    using encoded_type = typename next_codec_type::value_type;
+
+    /** @brief Codec for encoding/decoding the projected field */
+    FieldCodec field_codec;
+    /** @brief Function to project values from owner objects */
+    Projector projector;
+
+    /** @brief Constructs a projector_codec with field codec and projector function */
+    constexpr projector_codec(const FieldCodec& fc, Projector proj) noexcept
+        : field_codec(fc), projector(std::move(proj)) {}
+
+    /** @brief Returns the next codec in the encoding chain */
+    constexpr next_codec_type next_codec() const noexcept {
+        return field_codec.next_codec();
+    }
+
+    /** @brief Encodes a projected value */
+    constexpr encoded_type encode(const value_type& value) const noexcept {
+        return field_codec.encode(value);
+    }
+
+    /** @brief Encodes a projected value (rvalue overload) */
+    constexpr encoded_type encode(value_type&& value) const noexcept {
+        return field_codec.encode(std::move(value));
+    }
+
+    /** @brief Decodes to the projected value type */
+    constexpr value_type decode(const auto& value) const noexcept {
+        return field_codec.decode(value);
+    }
+
+    /** @brief Decodes to the projected value type (rvalue overload) */
+    constexpr value_type decode(auto&& value) const noexcept {
+        return field_codec.decode(std::forward<decltype(value)>(value));
+    }
+
+    /** @brief Projects a value from an owner object using the projector function */
+    constexpr value_type project(const owner_type& obj) const noexcept {
+        return std::invoke(projector, obj);
+    }
+};
+
+
+/**
+ * @brief Helper function to create a projector_codec
+ * @tparam Owner The type containing the value to project
+ * @param elem The codec for the projected value
+ * @param projector Function to extract the value from the owner
+ * @return A projector_codec wrapping the element codec
+ */
+template<typename Owner, Codec ElementCodec, typename Projector>
+constexpr auto projector_of(const ElementCodec& elem, Projector projector) {
+    return projector_codec<Owner, ElementCodec, std::decay_t<Projector>>(elem, std::move(projector));
+}
+
+} // namespace muesli

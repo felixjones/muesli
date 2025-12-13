@@ -1,0 +1,113 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+#include <muesli/util/range_holder>
+
+#include <optional>
+#include <type_traits>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for range-based iteration over encoded sequences.
+ *
+ * The range_codec transforms a codec for individual elements into a codec
+ * for range_holder<T>, enabling lazy iteration over encoded element sequences.
+ * Used internally by vector_codec and array_codec for element iteration.
+ *
+ * @tparam ElementCodec Codec for individual range elements
+ *
+ * Example:
+ * ```cpp
+ * auto codec = range_codec(int32_codec);
+ * range_holder<int32_t> rh = {...};
+ * auto encoded = codec.encode(rh);
+ * ```
+ */
+template<Codec ElementCodec>
+struct range_codec : fluent::optionable<range_codec<ElementCodec>>,
+                     fluent::constrainable<range_codec<ElementCodec>>,
+                     fluent::transformable<range_codec<ElementCodec>>,
+                     fluent::projectable<range_codec<ElementCodec>>,
+                     fluent::constructable<range_codec<ElementCodec>>,
+                     fluent::nullableable<range_codec<ElementCodec>> {
+    /** @brief Value type is a range holder of element values */
+    using value_type = range_holder<typename ElementCodec::value_type>;
+    /** @brief Next codec type in the encoding chain */
+    using next_codec_type = std::decay_t<decltype(std::declval<ElementCodec>().next_codec())>;
+    /** @brief Encoded type is a range holder of encoded elements */
+    using encoded_type = range_holder<typename next_codec_type::value_type>;
+
+    /** @brief Codec for individual range elements */
+    ElementCodec element_codec;
+
+    /** @brief Constructs a range_codec with the given element codec */
+    explicit constexpr range_codec(const ElementCodec& codec) noexcept : element_codec(codec) {}
+
+    /** @brief Returns a range_codec wrapping the next codec in the chain */
+    constexpr auto next_codec() const noexcept {
+        return range_codec<next_codec_type>(element_codec.next_codec());
+    }
+
+    /** @brief Encodes a range by lazily encoding each element */
+    encoded_type encode(auto&& value) const {
+        return encoded_type([val = std::move(const_cast<value_type&>(value)), it = typename value_type::iterator{},
+                             end = typename value_type::iterator{}, codec = element_codec,
+                             is_initialized = false]() mutable -> std::optional<typename next_codec_type::value_type> {
+            if (!is_initialized) {
+                it = val.begin();
+                end = val.end();
+                is_initialized = true;
+            }
+            if (it != end) {
+                auto encoded_element = codec.encode(*it);
+                ++it;
+                return encoded_element;
+            }
+            return std::nullopt;
+        });
+    }
+
+    /** @brief Decodes a range by lazily decoding each encoded element */
+    template<typename E>
+    value_type decode(E&& encoded) const {
+        auto make_encoded_range = [&]() mutable -> encoded_type {
+            if constexpr (std::is_const_v<std::remove_reference_t<E>>) {
+                return std::move(const_cast<encoded_type&>(encoded));
+            } else {
+                return std::forward<E>(encoded);
+            }
+        };
+        return value_type([enc = make_encoded_range(), it = typename encoded_type::iterator{},
+                           end = typename encoded_type::iterator{}, codec = element_codec,
+                           is_initialized = true]() mutable -> std::optional<typename ElementCodec::value_type> {
+            if (is_initialized) {
+                it = enc.begin();
+                end = enc.end();
+                is_initialized = false;
+            }
+
+            if (it != end) {
+                auto decoded_element = codec.decode(std::move(*it));
+                ++it;
+                return decoded_element;
+            }
+            return std::nullopt;
+        });
+    }
+};
+
+} // namespace muesli

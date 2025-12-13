@@ -1,0 +1,53 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+/** @brief Forward declaration of constrained_codec */
+template<Codec InnerCodec, typename Predicate>
+struct constrained_codec;
+}
+
+namespace muesli::fluent {
+
+/**
+ * @brief Mixin providing .constrain() method for codecs
+ *
+ * This mixin allows any codec to be wrapped in a constrained_codec, which
+ * validates encoded/decoded values against a user-provided predicate.
+ */
+template<typename Derived>
+struct constrainable {
+    /**
+     * @brief Wraps this codec with constraint checking
+     *
+     * Creates a constrained_codec that validates all encoded/decoded values
+     * against a user-provided predicate function. Returns the predicate as-is
+     * if validation passes, throws std::invalid_argument if it fails.
+     *
+     * @tparam Predicate A callable taking const value_type& and returning bool
+     * @param pred The predicate that must return true for values to be valid
+     * @return A constrained_codec<Derived, Predicate> wrapping this codec
+     *
+     * @code
+     * auto positive_int = int_codec.constrain([](int v) { return v > 0; });
+     * auto encoded = positive_int.encode(42);    // OK - returns 42
+     * auto encoded2 = positive_int.encode(-5);   // Throws std::invalid_argument
+     * @endcode
+     */
+    template<typename Predicate>
+    constexpr auto constrain(Predicate pred) const noexcept requires Codec<Derived> {
+        return muesli::constrained_codec<Derived, std::decay_t<Predicate>>{
+            static_cast<const Derived&>(*this),
+            std::move(pred)
+        };
+    }
+};
+
+} // namespace muesli::fluent

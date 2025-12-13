@@ -1,0 +1,155 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+
+#include <functional>
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for transforming values during encoding/decoding.
+ *
+ * The transform_codec wraps another codec and applies encode/decode functions
+ * to transform between the codec's native type and a different value type.
+ * Useful for type conversions, scaling, compression, encryption, or any
+ * custom transformation logic.
+ *
+ * @tparam InnerCodec The wrapped codec
+ * @tparam EncodeFn Function applied during encoding (value_type -> encoded_type)
+ * @tparam DecodeFn Function applied during decoding (InnerCodec::value_type -> value_type)
+ * @tparam ValueType The external value type (inferred from DecodeFn)
+ *
+ * Common use cases:
+ * - Temperature conversion (Celsius to Fahrenheit)
+ * - Unit scaling (metres -> millimetres)
+ * - Data encoding (strings -> bytes)
+ * - Compression (large data -> compressed representation)
+ * - Encryption/decryption
+ * - Custom business logic transformations
+ *
+ * @code
+ * // Temperature codec: store as Celsius internally, work with Fahrenheit externally
+ * auto temp_codec = transform_codec(
+ *     float_codec,
+ *     [](float fahrenheit) { return (fahrenheit - 32.0f) * 5.0f / 9.0f; },  // encode: F to C
+ *     [](float celsius) { return celsius * 9.0f / 5.0f + 32.0f; }           // decode: C to F
+ * );
+ * float room_temp_f = 72.5f;  // 72.5F
+ * auto encoded = temp_codec.encode(room_temp_f);  // Encodes as ~22.5C
+ * auto decoded = temp_codec.decode(encoded);      // Decodes back to 72.5F
+ *
+ * // Scaling transformation
+ * auto distance_mm = transform_codec(
+ *     int32_codec,
+ *     [](double meters) { return static_cast<int32_t>(meters * 1000); },
+ *     [](int32_t mm) { return mm / 1000.0; }
+ * );
+ *
+ * // String to bytes transformation
+ * auto hex_codec = transform_codec(
+ *     string_codec,
+ *     [](std::span<const uint8_t> bytes) {
+ *         return bytes_to_hex(bytes);  // custom function
+ *     },
+ *     [](const std::string& hex) {
+ *         return hex_to_bytes(hex);    // custom function
+ *     }
+ * );
+ * @endcode
+ *
+ * @see transformable - Fluent API mixin for adding transformations
+ * @see transform_input - For encoding-only transformations
+ * @see transform_output - For decoding-only transformations
+ */
+template<Codec InnerCodec, typename EncodeFn, typename DecodeFn,
+         typename ValueType = std::invoke_result_t<DecodeFn, typename InnerCodec::value_type>>
+struct transform_codec : fluent::optionable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::constrainable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::transformable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::projectable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::constructable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::nullableable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>> {
+    /** @brief Inner value type from the inner codec */
+    using inner_value_type = typename InnerCodec::value_type;
+    /** @brief Value type after decode transformation */
+    using value_type = ValueType;
+    /** @brief Next codec type in the encoding chain */
+    using next_codec_type = std::decay_t<decltype(std::declval<InnerCodec>().next_codec())>;
+    /** @brief Encoded type from the next codec */
+    using encoded_type = typename next_codec_type::value_type;
+
+    /** @brief Inner codec used after transformation */
+    InnerCodec inner;
+    /** @brief Function to transform values before encoding */
+    EncodeFn encode_fn;
+    /** @brief Function to transform values after decoding */
+    DecodeFn decode_fn;
+
+    /** @brief Constructs a transform_codec with inner codec and transformation functions */
+    constexpr transform_codec(const InnerCodec& c, EncodeFn enc, DecodeFn dec)
+        : inner(c), encode_fn(std::move(enc)), decode_fn(std::move(dec)) {}
+
+    /** @brief Returns the next codec from the inner codec */
+    constexpr next_codec_type next_codec() const noexcept {
+        return inner.next_codec();
+    }
+
+    /** @brief Projects a value from owner and applies decode transformation */
+    template<typename Owner>
+    constexpr value_type project(const Owner& obj) const noexcept
+        requires requires(const InnerCodec& c, const Owner& o) { c.project(o); }
+    {
+        auto projected = inner.project(obj);
+        return std::invoke(decode_fn, std::move(projected));
+    }
+
+    /** @brief Applies encode transformation then encodes with inner codec */
+    template<typename V>
+    constexpr encoded_type encode(V&& value) const {
+        auto&& mapped = std::invoke(encode_fn, std::forward<V>(value));
+        return inner.encode(std::move(mapped));
+    }
+
+    /** @brief Decodes with inner codec then applies decode transformation */
+    template<typename E>
+    constexpr value_type decode(E&& encoded) const {
+        auto inner_decoded = inner.decode(std::forward<E>(encoded));
+        return std::invoke(decode_fn, std::move(inner_decoded));
+    }
+};
+
+/**
+ * @brief Creates a transform_codec that maps values during encoding/decoding
+ * @tparam InnerCodec The codec for the transformed values
+ * @tparam EncodeFn Function type for transforming values before encoding
+ * @tparam DecodeFn Function type for transforming values after decoding
+ * @param inner The inner codec to use after transformation
+ * @param enc Function to transform values before encoding
+ * @param dec Function to transform values after decoding
+ * @return A transform_codec wrapping the inner codec
+ */
+template<Codec InnerCodec, typename EncodeFn, typename DecodeFn>
+constexpr auto transform(const InnerCodec& inner, EncodeFn enc, DecodeFn dec) {
+    return transform_codec<InnerCodec, std::decay_t<EncodeFn>, std::decay_t<DecodeFn>>(
+        inner,
+        std::move(enc),
+        std::move(dec)
+    );
+}
+
+} // namespace muesli

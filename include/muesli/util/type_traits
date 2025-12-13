@@ -1,0 +1,120 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+#include <algorithm>
+#include <concepts>
+#include <cstddef>
+#include <optional>
+#include <tuple>
+#include <type_traits>
+#include <variant>
+
+namespace muesli {
+
+/** @brief Forward declaration of range_holder utility type */
+template<typename T>
+struct range_holder;
+
+/** @brief Helper constant for alignment, returns 0 for monostate */
+template<typename T>
+constexpr std::size_t alignment_or_zero = std::same_as<T, std::monostate> ? 0 : alignof(T);
+
+/** @brief Trait to compute alignment of a variant type */
+template<typename T>
+struct variant_alignment;
+
+/** @brief Specialisation for std::variant - returns max alignment of alternatives */
+template<typename... Ts>
+struct variant_alignment<std::variant<Ts...>> {
+    static constexpr std::size_t value = std::max({alignment_or_zero<Ts>...});
+};
+
+/** @brief Value template for variant alignment */
+template<typename T>
+inline constexpr std::size_t variant_alignment_v = variant_alignment<T>::value;
+
+/** @brief Trait to detect std::optional types */
+template<typename>
+struct is_optional : std::false_type {};
+
+/** @brief Specialisation for std::optional */
+template<typename T>
+struct is_optional<std::optional<T>> : std::true_type {};
+
+/** @brief Value template to detect std::optional types */
+template<typename T>
+inline constexpr bool is_optional_v = is_optional<T>::value;
+
+/** @brief Trait to detect std::tuple types */
+template<typename>
+struct is_tuple : std::false_type {};
+
+/** @brief Specialisation for std::tuple */
+template<typename... Ts>
+struct is_tuple<std::tuple<Ts...>> : std::true_type {};
+
+/** @brief Value template to detect std::tuple types */
+template<typename T>
+inline constexpr bool is_tuple_v = is_tuple<T>::value;
+
+/** @brief Trait to detect range_holder types */
+template<typename>
+struct is_range_holder : std::false_type {};
+
+/** @brief Specialisation for range_holder */
+template<typename T>
+struct is_range_holder<range_holder<T>> : std::true_type {};
+
+/** @brief Value template to detect range_holder types */
+template<typename T>
+inline constexpr bool is_range_holder_v = is_range_holder<T>::value;
+
+/** @brief Trait to detect move-only types (move constructible but not copy constructible) */
+template<typename T>
+struct is_move_only : std::bool_constant<std::move_constructible<T> && !std::copy_constructible<T>> {};
+
+/** @brief Value template to detect move-only types */
+template<typename T>
+inline constexpr bool is_move_only_v = is_move_only<T>::value;
+
+/** @brief Trait to extract owner and member types from pointers-to-members and member functions */
+template<typename>
+struct member_pointer_traits;
+
+/** @brief Specialisation for data member pointers (T Owner::*) */
+template<typename Owner, typename Member>
+struct member_pointer_traits<Member Owner::*> {
+    using owner_type = Owner;
+    using member_type = Member;
+};
+
+/** @brief Specialisation for member function pointers with no arguments */
+template<typename Owner, typename R>
+struct member_pointer_traits<R (Owner::*)()> {
+    using owner_type = Owner;
+    using member_type = R;
+};
+
+/** @brief Specialisation for const member function pointers with no arguments */
+template<typename Owner, typename R>
+struct member_pointer_traits<R (Owner::*)() const> {
+    using owner_type = Owner;
+    using member_type = R;
+};
+
+/** @brief Specialisation for noexcept member function pointers */
+template<typename Owner, typename R>
+struct member_pointer_traits<R (Owner::*)() noexcept> : member_pointer_traits<R (Owner::*)()> {};
+
+/** @brief Specialisation for const noexcept member function pointers */
+template<typename Owner, typename R>
+struct member_pointer_traits<R (Owner::*)() const noexcept> : member_pointer_traits<R (Owner::*)() const> {};
+
+} // namespace muesli

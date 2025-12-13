@@ -1,0 +1,61 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/delimited_codec>
+#include <muesli/identity_codec>
+#include <muesli/transform_codec>
+#include <muesli/util/range_holder>
+
+#include <string>
+
+namespace muesli {
+
+/**
+ * @category String Codecs
+ * @brief Codec for std::basic_string with configurable char traits and allocator.
+ */
+template<typename CharT, typename Traits = std::char_traits<CharT>, typename Allocator = std::allocator<CharT>>
+inline constexpr auto basic_string_codec = transform_codec(
+    delimited_codec(identity_codec<CharT>{}, [](CharT c) { return c == CharT{}; } // Null terminator predicate
+                    ),
+    // Encode: std::basic_string -> range_holder<CharT> (with null terminator added)
+    [](const std::basic_string<CharT, Traits, Allocator>& str) {
+        return range_holder<CharT>([str, idx = std::size_t{0}]() mutable -> std::optional<CharT> {
+            if (idx < str.size()) {
+                return str[idx++];
+            } else if (idx == str.size()) {
+                idx++;
+                return CharT{}; // Null terminator
+            }
+            return std::nullopt;
+        });
+    },
+    // Decode: range_holder<CharT> -> std::basic_string (null terminator removed)
+    [](range_holder<CharT>&& holder) {
+        std::basic_string<CharT, Traits, Allocator> result;
+        for (auto&& ch : holder) {
+            if (ch == CharT{}) {
+                break; // Stop at null terminator, don't include it
+            }
+            result.push_back(ch);
+        }
+        return result;
+    });
+
+/** @brief Codec for std::string. */
+inline constexpr auto string_codec = basic_string_codec<char>;
+/** @brief Codec for std::wstring. */
+inline constexpr auto wstring_codec = basic_string_codec<wchar_t>;
+/** @brief Codec for std::u8string. */
+inline constexpr auto u8string_codec = basic_string_codec<char8_t>;
+/** @brief Codec for std::u16string. */
+inline constexpr auto u16string_codec = basic_string_codec<char16_t>;
+/** @brief Codec for std::u32string. */
+inline constexpr auto u32string_codec = basic_string_codec<char32_t>;
+
+} // namespace muesli

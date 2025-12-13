@@ -1,0 +1,160 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/type_traits>
+
+#include <tuple>
+#include <variant>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for std::variant types.
+ *
+ * The variant_codec encodes/decodes std::variant<Ts...> using a discriminant
+ * (variant index) followed by the encoded value for the active alternative.
+ * This enables polymorphic serialisation with compact storage.
+ *
+ * @tparam Codecs Variadic list of codecs (one per variant alternative)
+ *
+ * Perfect for:
+ * - Message types (command, response, error)
+ * - Polymorphic data (int or string or floating point)
+ * - State machines (idle, running, paused, done)
+ * - Result types (success or error)
+ *
+ * @code
+ * // Message type: either an integer ID or string name
+ * auto msg_codec = variant_codec(int32_codec, string_codec);
+ * std::variant<int32_t, std::string> msg1 = 42;         // int alternative
+ * std::variant<int32_t, std::string> msg2 = "alert";    // string alternative
+ * auto encoded1 = msg_codec.encode(msg1);
+ * auto encoded2 = msg_codec.encode(msg2);
+ *
+ * // Response type: success with data or error with message
+ * auto response = variant_codec(
+ *     tuple_codec(int32_codec, string_codec),  // success: (status_code, data)
+ *     string_codec                              // error: (error message)
+ * );
+ * using Response = std::variant<
+ *     std::tuple<int32_t, std::string>,  // success: code and data
+ *     std::string                        // error: message only
+ * >;
+ * Response ok = std::tuple<int32_t, std::string>{200, "OK"};
+ * Response err = std::string{"Not found"};
+ * auto encoded_ok = response.encode(ok);
+ * auto encoded_err = response.encode(err);
+ *
+ * // State machine: idle, running with progress, or done with result
+ * enum class State { Idle, Running, Done };
+ * auto state = variant_codec(
+ *     monostate_codec,        // Idle state (no data)
+ *     int32_codec,            // Running state (progress 0-100)
+ *     string_codec            // Done state (result message)
+ * );
+ * using StateValue = std::variant<std::monostate, int32_t, std::string>;
+ * @endcode
+ *
+ * @note Discriminant is encoded as uint8_t, limiting variants to ≤256 alternatives
+ * @note Index 0 is always the first alternative
+ * @see optional_codec - For binary presence/absence
+ * @see nullable_codec - For pointer-like presence/absence
+ */
+template<Codec... Codecs>
+struct variant_codec : fluent::optionable<variant_codec<Codecs...>>,
+                       fluent::constrainable<variant_codec<Codecs...>>,
+                       fluent::transformable<variant_codec<Codecs...>>,
+                       fluent::projectable<variant_codec<Codecs...>>,
+                       fluent::constructable<variant_codec<Codecs...>>,
+                       fluent::nullableable<variant_codec<Codecs...>> {
+    /** @brief Value type is a variant of all codec value types */
+    using value_type = std::variant<typename Codecs::value_type...>;
+
+    /** @brief Tuple of codecs, one for each variant alternative */
+    std::tuple<Codecs...> codecs;
+
+    /** @brief Constructs a variant_codec from the given alternative codecs */
+    explicit constexpr variant_codec(const Codecs&... cs) noexcept : codecs(cs...) {}
+
+    /** @brief Returns a variant_codec of the next codecs in the chain */
+    constexpr auto next_codec() const noexcept {
+        return next_codec_impl(std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Encodes a variant by encoding the active alternative */
+    constexpr auto encode(const value_type& value) const noexcept {
+        return encode_impl(value, std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Encodes a variant by encoding the active alternative (rvalue overload) */
+    constexpr auto encode(value_type&& value) const noexcept {
+        return encode_impl(std::move(value), std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Decodes an encoded variant by decoding the appropriate alternative */
+    constexpr value_type decode(auto&& value) const noexcept {
+        return decode_impl(std::forward<decltype(value)>(value), std::index_sequence_for<Codecs...>{});
+    }
+
+private:
+    template<std::size_t I, typename Val>
+    constexpr auto encode_at(Val&& value) const noexcept {
+        using encoded_type = typename std::decay_t<decltype(next_codec())>::value_type;
+        return encoded_type(std::in_place_index<I>, std::get<I>(codecs).encode(std::get<I>(std::forward<Val>(value))));
+    }
+
+    template<std::size_t... Is, typename Val>
+    constexpr auto encode_impl(Val&& value, std::index_sequence<Is...>) const noexcept {
+        using encoded_type = typename std::decay_t<decltype(next_codec())>::value_type;
+
+        auto runtime_index = value.index();
+
+        encoded_type result{};
+        ((runtime_index == Is ? (result = encode_at<Is>(std::forward<Val>(value)), true) : false), ...);
+        return result;
+    }
+
+    template<std::size_t... Is, typename Enc>
+    constexpr value_type decode_impl(Enc&& value, std::index_sequence<Is...>) const noexcept {
+        auto runtime_index = value.index();
+
+        std::optional<value_type> result;
+
+        ((runtime_index == Is ? (result.emplace(std::in_place_index<Is>,
+            std::get<Is>(codecs).decode(std::get<Is>(std::forward<Enc>(value)))), true) : false), ...);
+
+        return std::move(*result);
+    }
+
+    template<typename T, typename... EncodedTypes>
+    static constexpr std::size_t find_encoded_index() noexcept {
+        std::size_t index = 0;
+        ((std::same_as<T, EncodedTypes> ? true : (++index, false)) || ...);
+        return index;
+    }
+
+    template<std::size_t... Is>
+    constexpr auto next_codec_impl(std::index_sequence<Is...>) const noexcept {
+        return variant_codec<std::decay_t<decltype(std::get<Is>(codecs).next_codec())>...>(
+            std::get<Is>(codecs).next_codec()...
+        );
+    }
+};
+
+/** @brief Deduction guide for variant_codec */
+template<Codec... Codecs>
+variant_codec(const Codecs&...) -> variant_codec<Codecs...>;
+
+} // namespace muesli

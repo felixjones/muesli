@@ -1,0 +1,162 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/range_codec>
+#include <muesli/util/concepts>
+#include <muesli/util/range_holder>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for element-delimited ranges (strings, delimited lists).
+ *
+ * The delimited_codec encodes/decodes a range of elements up to a delimiter.
+ * Commonly used for null-terminated strings and comma-separated values.
+ *
+ * @tparam ElementCodec Codec for individual elements
+ * @tparam DelimiterPredicate Predicate to detect delimiter (returns true when found)
+ *
+ * Example:
+ * ```cpp
+ * auto null_term = delimited_codec(
+ *     char_codec,
+ *     [](char c) { return c == '\0'; }
+ * );
+ * ```
+ */
+template<Codec ElementCodec, typename DelimiterPredicate>
+struct delimited_codec : fluent::optionable<delimited_codec<ElementCodec, DelimiterPredicate>>,
+                         fluent::constrainable<delimited_codec<ElementCodec, DelimiterPredicate>>,
+                         fluent::transformable<delimited_codec<ElementCodec, DelimiterPredicate>>,
+                         fluent::projectable<delimited_codec<ElementCodec, DelimiterPredicate>>,
+                         fluent::constructable<delimited_codec<ElementCodec, DelimiterPredicate>>,
+                         fluent::nullableable<delimited_codec<ElementCodec, DelimiterPredicate>> {
+    /** @brief Element value type from the element codec */
+    using element_value_type = typename ElementCodec::value_type;
+    /** @brief Next codec type in the encoding chain */
+    using next_codec_type = std::decay_t<decltype(std::declval<ElementCodec>().next_codec())>;
+    /** @brief Encoded element type from the next codec */
+    using element_encoded_type = typename next_codec_type::value_type;
+    /** @brief Value type is a range holder of element values */
+    using value_type = range_holder<element_value_type>;
+    /** @brief Encoded type is a range holder of encoded elements */
+    using encoded_type = range_holder<element_encoded_type>;
+
+    /** @brief Codec for individual elements */
+    ElementCodec element_codec;
+    /** @brief Predicate to detect delimiter elements */
+    DelimiterPredicate delimiter_predicate;
+
+    /** @brief Constructs a delimited_codec with element codec and delimiter predicate */
+    constexpr delimited_codec(const ElementCodec& codec, const DelimiterPredicate& predicate) noexcept
+        : element_codec(codec), delimiter_predicate(predicate) {}
+
+    /** @brief Returns the next codec in the encoding chain */
+    constexpr auto next_codec() const noexcept {
+        return range_codec(element_codec.next_codec());
+    }
+
+    /** @brief Encodes a range of values, stopping at delimiter elements */
+    encoded_type encode(value_type&& value) const {
+        struct encode_state {
+            value_type val;
+            decltype(val.begin()) it;
+            decltype(val.end()) end;
+            ElementCodec codec;
+            DelimiterPredicate predicate;
+            bool is_initialized = false;
+            bool has_found_delimiter = false;
+        };
+
+        encode_state state{std::move(value), {}, {}, element_codec, delimiter_predicate, false, false};
+
+        return encoded_type([state = std::move(state)]() mutable -> std::optional<element_encoded_type> {
+            if (!state.is_initialized) {
+                state.it = state.val.begin();
+                state.end = state.val.end();
+                state.is_initialized = true;
+            }
+
+            if (state.has_found_delimiter) {
+                return std::nullopt;
+            }
+
+            if (state.it != state.end) {
+                auto elem = std::move(*state.it);
+                ++state.it;
+                auto encoded_elem = state.codec.next_codec().encode(state.codec.encode(std::move(elem)));
+
+                if (state.predicate(encoded_elem)) {
+                    state.has_found_delimiter = true;
+                }
+
+                return encoded_elem;
+            } else {
+                return std::nullopt;
+            }
+        });
+    }
+
+    /**
+     * @brief Encodes a const range by consuming it immediately
+     * @note Uses const_cast because the value is owned and consumed during encoding
+     */
+    encoded_type encode(const value_type& value) const {
+        return encode(std::move(const_cast<value_type&>(value)));
+    }
+
+    /** @brief Internal state for decoding delimited ranges */
+    struct decode_state {
+        encoded_type enc;
+        decltype(enc.begin()) it;
+        decltype(enc.end()) end;
+        ElementCodec codec;
+        DelimiterPredicate predicate;
+        bool is_initialized = false;
+        bool has_found_delimiter = false;
+    };
+
+    template<typename E>
+    constexpr value_type decode(E&& encoded) const {
+        // Construct decode_state by moving the incoming range_holder (or encoded value)
+        auto state = decode_state{std::forward<E>(encoded), {}, {}, element_codec, delimiter_predicate, false, false};
+        // The rest of the logic operates on state without copying the underlying range
+        return value_type([state = std::move(state)]() mutable -> std::optional<element_value_type> {
+            if (!state.is_initialized) {
+                state.it = state.enc.begin();
+                state.end = state.enc.end();
+                state.is_initialized = true;
+            }
+
+            while (!state.has_found_delimiter && (state.it != state.end)) {
+                auto encoded_elem = std::move(*state.it);
+                ++state.it;
+
+                bool is_delimiter = state.predicate(encoded_elem);
+                auto decoded_elem = state.codec.decode(state.codec.next_codec().decode(std::move(encoded_elem)));
+
+                if (is_delimiter) {
+                    state.has_found_delimiter = true;
+                }
+
+                return decoded_elem;
+            }
+
+            return std::nullopt;
+        });
+    }
+};
+
+} // namespace muesli

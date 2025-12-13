@@ -1,0 +1,322 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/constant_codec>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+#include <muesli/variant_codec>
+
+#include <optional>
+#include <stdexcept>
+#include <variant>
+
+namespace muesli {
+
+/** @brief Forward declaration of constrained_codec */
+template<Codec InnerCodec, typename Predicate>
+struct constrained_codec;
+
+/**
+ * @category Built-in Codecs
+ * @brief Wraps a codec to encode/decode std::optional values
+ *
+ * The optional_codec transforms a codec for type T into a codec for std::optional<T>.
+ * It uses a variant under the hood: std::variant<std::monostate, T> where monostate
+ * represents the absence of a value.
+ *
+ * This codec intentionally does NOT use the optionable mixin to prevent the
+ * nonsensical pattern of calling .optional().optional().
+ *
+ * @tparam ValueCodec The codec for the wrapped value type
+ *
+ * Template member types:
+ * - value_type: std::optional<ValueCodec::value_type>
+ * - encoded_type: std::variant<std::monostate, ValueCodec::value_type>
+ *
+ * Example usage:
+ * ```cpp
+ * auto inner = muesli::int32_codec;
+ * auto opt_codec = muesli::optional_codec(inner);
+ *
+ * std::optional<int32_t> value = 42;
+ * auto encoded = opt_codec.encode(value);
+ *
+ * std::optional<int32_t> empty = std::nullopt;
+ * auto encoded_empty = opt_codec.encode(empty);
+ * ```
+ *
+ * @note Encoding null values uses variant index 0 with std::monostate
+ * @note Encoding present values uses variant index 1 with the actual value
+ * @note This codec can be constrained with .constrain() to require non-null
+ */
+template<Codec ValueCodec>
+struct optional_codec : fluent::transformable<optional_codec<ValueCodec>>,
+                        fluent::projectable<optional_codec<ValueCodec>>,
+                        fluent::constructable<optional_codec<ValueCodec>> {
+    /** @brief Value type is std::optional of the inner codec's value type */
+    using value_type = std::optional<typename ValueCodec::value_type>;
+    /** @brief Next codec type is a variant codec (monostate or value) */
+    using next_codec_type =
+        decltype(variant_codec(constant_codec<std::monostate>{}, std::declval<const ValueCodec&>()));
+    /** @brief Encoded type from the next codec */
+    using encoded_type = next_codec_type::value_type;
+
+    /** @brief Codec for encoding/decoding the contained value */
+    ValueCodec value_codec;
+
+    /**
+     * @brief Constructs optional_codec with a value codec
+     * @param codec The codec to use for encoding/decoding wrapped values
+     */
+    explicit constexpr optional_codec(const ValueCodec& codec) noexcept
+        : value_codec(codec), m_next_codec(variant_codec(constant_codec<std::monostate>{}, codec)) {}
+
+    /**
+     * @brief Gets the next codec in the chain (variant codec)
+     * @return The underlying variant codec
+     */
+    constexpr const next_codec_type& next_codec() const noexcept {
+        return m_next_codec;
+    }
+
+    /**
+     * @brief Encodes an rvalue optional to its variant form
+     * @param value The optional value to encode
+     * @return Encoded variant with index 0 (monostate) or 1 (value)
+     */
+    static constexpr encoded_type encode(value_type&& value) noexcept {
+        return value ? encoded_type{std::in_place_index_t<1>{}, std::move(*value)}
+                     : encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+    }
+
+    /**
+     * @brief Encodes a const reference optional to its variant form
+     * @param value The optional value to encode
+     * @return Encoded variant with index 0 (monostate) or 1 (value)
+     */
+    static constexpr encoded_type encode(const value_type& value) noexcept {
+        return value ? encoded_type{std::in_place_index_t<1>{}, *value}
+                     : encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+    }
+
+    /**
+     * @brief Decodes a variant to an optional
+     * @param value The encoded variant
+     * @return Optional with value if variant index is 1, std::nullopt if index is 0
+     */
+    constexpr value_type decode(encoded_type&& value) const noexcept {
+        return std::visit(
+            []<typename T>(const T& v) -> value_type {
+                if constexpr (std::same_as<T, std::monostate>) {
+                    return std::nullopt;
+                } else {
+                    return value_type{v};
+                }
+            },
+            std::forward<encoded_type>(value));
+    }
+
+    /**
+     * @brief Decodes a variant to an optional (const reference version)
+     * @param value The encoded variant
+     * @return Optional with value if variant index is 1, std::nullopt if index is 0
+     */
+    constexpr value_type decode(const encoded_type& value) const noexcept {
+        return std::visit(
+            []<typename T>(const T& v) -> value_type {
+                if constexpr (std::same_as<T, std::monostate>) {
+                    return std::nullopt;
+                } else {
+                    return value_type{v};
+                }
+            },
+            value);
+    }
+
+    /**
+     * @brief Constrains this codec to reject null values
+     * @return A constrained_codec that throws on std::nullopt
+     * @throws std::invalid_argument if value is nullopt during encode/decode
+     */
+    constexpr auto constrain() const {
+        auto checking_pred = [](const value_type& v) {
+            if (!v.has_value()) {
+                throw std::invalid_argument("optional_codec: constraint violated - value is nullopt");
+            }
+            return true;
+        };
+        return constrained_codec<optional_codec<ValueCodec>, decltype(checking_pred)>{*this, std::move(checking_pred)};
+    }
+
+    /**
+     * @brief Constrains this codec with a custom predicate
+     * @tparam Predicate A callable that takes const value_type& and returns bool
+     * @param pred The predicate to enforce
+     * @return A constrained_codec that applies the predicate
+     */
+    template<typename Predicate>
+    constexpr auto constrain(Predicate pred) const noexcept {
+        return constrained_codec<optional_codec<ValueCodec>, std::decay_t<Predicate>>{*this, std::move(pred)};
+    }
+
+  private:
+    next_codec_type m_next_codec;
+};
+
+/**
+ * @category Built-in Codecs
+ * @brief Specialised optional_codec for constrained inner codecs
+ *
+ * When the inner codec is constrained, exceptions during encode/decode are
+ * caught and converted to null values, allowing graceful degradation.
+ *
+ * @tparam InnerCodec The potentially constrained inner codec
+ * @tparam Predicate The constraint predicate type
+ */
+template<Codec InnerCodec, typename Predicate>
+struct optional_codec<constrained_codec<InnerCodec, Predicate>>
+    : fluent::transformable<optional_codec<constrained_codec<InnerCodec, Predicate>>>
+{
+    using value_codec_type = constrained_codec<InnerCodec, Predicate>;
+    using value_type = std::optional<typename value_codec_type::value_type>;
+    using next_codec_type =
+        decltype(variant_codec(constant_codec<std::monostate>{}, std::declval<const value_codec_type&>()));
+    using encoded_type = next_codec_type::value_type;
+
+    value_codec_type value_codec;
+
+    /**
+     * @brief Constructs optional_codec with a constrained inner codec
+     * @param codec The constrained codec to use for encoding/decoding values
+     */
+    explicit constexpr optional_codec(const value_codec_type& codec) noexcept
+        : value_codec(codec), m_nextCodec(variant_codec(constant_codec<std::monostate>{}, codec)) {}
+
+    /**
+     * @brief Gets the next codec in the chain (variant codec)
+     * @return The underlying variant codec
+     */
+    constexpr const next_codec_type& next_codec() const noexcept {
+        return m_nextCodec;
+    }
+
+    /**
+     * @brief Encode with exception handling - returns monostate on failure
+     * @param value The optional value to encode
+     * @return Encoded variant with index 0 (monostate) or 1 (encoded value)
+     */
+    constexpr encoded_type encode(value_type&& value) const noexcept {
+        if (!value) {
+            return encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+        }
+        try {
+            auto encoded_value = value_codec.encode(std::move(*value));
+            return encoded_type{std::in_place_index_t<1>{}, std::move(encoded_value)};
+        } catch (...) {
+            return encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+        }
+    }
+
+    /**
+     * @brief Encode with exception handling - returns monostate on failure (const ref version)
+     * @param value The optional value to encode
+     * @return Encoded variant with index 0 (monostate) or 1 (encoded value)
+     */
+    constexpr encoded_type encode(const value_type& value) const noexcept {
+        if (!value) {
+            return encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+        }
+        try {
+            auto encoded_value = value_codec.encode(*value);
+            return encoded_type{std::in_place_index_t<1>{}, std::move(encoded_value)};
+        } catch (...) {
+            return encoded_type{std::in_place_index_t<0>{}, std::monostate{}};
+        }
+    }
+
+    /**
+     * @brief Decode with exception handling - returns nullopt on failure
+     * @param value The encoded variant
+     * @return Optional with value if successful, std::nullopt on failure
+     */
+    constexpr value_type decode(encoded_type&& value) const noexcept {
+        return std::visit(
+            [this]<typename T>(T&& v) -> value_type {
+                if constexpr (std::same_as<std::decay_t<T>, std::monostate>) {
+                    return std::nullopt;
+                } else {
+                    try {
+                        return value_type{value_codec.decode(std::forward<T>(v))};
+                    } catch (...) {
+                        return std::nullopt;
+                    }
+                }
+            },
+            std::forward<encoded_type>(value));
+    }
+
+    /**
+     * @brief Decode with exception handling - returns nullopt on failure (const ref version)
+     * @param value The encoded variant
+     * @return Optional with value if successful, std::nullopt on failure
+     */
+    constexpr value_type decode(const encoded_type& value) const noexcept {
+        return std::visit(
+            [this]<typename T>(const T& v) -> value_type {
+                if constexpr (std::same_as<T, std::monostate>) {
+                    return std::nullopt;
+                } else {
+                    try {
+                        return value_type{value_codec.decode(v)};
+                    } catch (...) {
+                        return std::nullopt;
+                    }
+                }
+            },
+            value);
+    }
+
+    /**
+     * @brief Constrains this codec to reject null values
+     * @return A constrained_codec that throws on std::nullopt
+     * @throws std::invalid_argument if value is nullopt during encode/decode
+     */
+    constexpr auto constrain() const {
+        auto checking_pred = [](const value_type& v) {
+            if (!v.has_value()) {
+                throw std::invalid_argument("optional_codec: constraint violated - value is nullopt");
+            }
+            return true;
+        };
+        return constrained_codec<optional_codec<constrained_codec<InnerCodec, Predicate>>, decltype(checking_pred)>{
+            *this,
+            std::move(checking_pred)
+        };
+    }
+
+    /**
+     * @brief Constrains this codec with a custom predicate
+     * @tparam Pred A callable that takes const value_type& and returns bool
+     * @param pred The predicate to enforce
+     * @return A constrained_codec that applies the predicate
+     */
+    template<typename Pred>
+    constexpr auto constrain(Pred pred) const noexcept {
+        return constrained_codec<optional_codec<constrained_codec<InnerCodec, Predicate>>, std::decay_t<Pred>>{
+            *this,
+            std::move(pred)
+        };
+    }
+
+  private:
+    next_codec_type m_nextCodec;
+};
+
+} // namespace muesli

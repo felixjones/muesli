@@ -1,0 +1,77 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/constant_codec>
+#include <muesli/identity_codec>
+
+#include <cstddef>
+
+namespace muesli {
+
+/**
+ * Codec for std::size_t values.
+ *
+ * An identity codec that encodes/decodes std::size_t without transformation.
+ * Commonly used for array sizes, counts, and container lengths.
+ *
+ * @code
+ * auto size = size_codec.encode(42);  // size_t -> size_t
+ * auto decoded = size_codec.decode(size);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::size_t> size_codec{};
+
+/**
+ * Codec for std::ptrdiff_t values.
+ *
+ * An identity codec that encodes/decodes std::ptrdiff_t without transformation.
+ * Used for pointer differences and signed offsets.
+ *
+ * @code
+ * auto diff = ptrdiff_codec.encode(-5);
+ * auto decoded = ptrdiff_codec.decode(diff);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::ptrdiff_t> ptrdiff_codec{};
+
+/**
+ * Codec for nullptr_t values.
+ *
+ * A constant codec that always encodes/decodes as nullptr.
+ * Useful for optional pointer fields or sentinel values.
+ *
+ * @code
+ * auto encoded = nullptr_codec.encode(nullptr);
+ * auto decoded = nullptr_codec.decode(nullptr);  // Always nullptr
+ * @endcode
+ *
+ * @see constant_codec
+ */
+inline constexpr constant_codec<std::nullptr_t> nullptr_codec{};
+
+/**
+ * Codec for std::byte values.
+ *
+ * An identity codec that encodes/decodes std::byte without transformation.
+ * Used for raw byte data and binary serialisation.
+ *
+ * @code
+ * std::byte b{0x42};
+ * auto encoded = byte_codec.encode(b);
+ * auto decoded = byte_codec.decode(encoded);
+ * @endcode
+ *
+ * @see identity_codec
+ */
+inline constexpr identity_codec<std::byte> byte_codec{};
+
+} // namespace muesli

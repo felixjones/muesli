@@ -1,0 +1,141 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+
+#include <functional>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for constrained values with validation predicates.
+ *
+ * The constrained_codec wraps another codec and validates encoded/decoded values
+ * against a user-provided predicate. Throws std::invalid_argument if validation fails.
+ *
+ * @tparam InnerCodec The wrapped codec
+ * @tparam Predicate Function taking const value_type& and returning bool
+ *
+ * Example:
+ * ```cpp
+ * auto positive_int = int_codec.constrain([](int v) { return v > 0; });
+ * auto encoded = positive_int.encode(42);    // OK
+ * // auto bad = positive_int.encode(-5);     // Throws
+ * ```
+ */
+template<Codec InnerCodec, typename Predicate>
+struct constrained_codec : fluent::transformable<constrained_codec<InnerCodec, Predicate>>,
+                           fluent::projectable<constrained_codec<InnerCodec, Predicate>>,
+                           fluent::constructable<constrained_codec<InnerCodec, Predicate>>,
+                           fluent::nullableable<constrained_codec<InnerCodec, Predicate>> {
+    /** @brief The value type from the inner codec */
+    using value_type = typename InnerCodec::value_type;
+    /** @brief The next codec type from the inner codec */
+    using next_codec_type = std::decay_t<decltype(std::declval<InnerCodec>().next_codec())>;
+    /** @brief The encoded type from the next codec */
+    using encoded_type = typename next_codec_type::value_type;
+
+    /** @brief The inner codec to use for encoding/decoding */
+    InnerCodec inner;
+    /** @brief The predicate to validate values */
+    Predicate predicate;
+
+    /** @brief Constructs a constrained_codec with the given inner codec and predicate */
+    constexpr constrained_codec(const InnerCodec& c, Predicate pred) : inner(c), predicate(std::move(pred)) {}
+
+    /** @brief Returns the next codec from the inner codec */
+    constexpr const next_codec_type& next_codec() const noexcept {
+        return inner.next_codec();
+    }
+
+    /** @brief Encodes a value after validating it passes the constraint */
+    constexpr encoded_type encode(const value_type& value) const {
+        if (!std::invoke(predicate, value)) {
+            throw std::invalid_argument("constrained_codec: encode constraint violated");
+        }
+        return inner.encode(value);
+    }
+
+    /** @brief Encodes a value after validating it passes the constraint (rvalue overload) */
+    constexpr encoded_type encode(value_type&& value) const {
+        if (!std::invoke(predicate, value)) {
+            throw std::invalid_argument("constrained_codec: encode constraint violated");
+        }
+        return inner.encode(std::move(value));
+    }
+
+    /** @brief Decodes a value and validates it passes the constraint */
+    constexpr value_type decode(const auto& encoded) const {
+        auto decoded = inner.decode(encoded);
+        if (!std::invoke(predicate, decoded)) {
+            throw std::invalid_argument("constrained_codec: decode constraint violated");
+        }
+        return decoded;
+    }
+
+    /** @brief Decodes a value and validates it passes the constraint (rvalue overload) */
+    constexpr value_type decode(auto&& encoded) const {
+        auto decoded = inner.decode(std::forward<decltype(encoded)>(encoded));
+        if (!std::invoke(predicate, decoded)) {
+            throw std::invalid_argument("constrained_codec: decode constraint violated");
+        }
+        return decoded;
+    }
+
+    /**
+     * @brief Adds an additional constraint by merging predicates with AND logic
+     * @param new_pred The new predicate to add
+     * @return A constrained_codec with merged predicates
+     */
+    template<typename NewPredicate>
+    constexpr auto constrain(NewPredicate new_pred) const noexcept {
+        auto merged_predicate = [inner_pred = predicate, outer_pred = std::move(new_pred)](const auto& value) {
+            return std::invoke(inner_pred, value) && std::invoke(outer_pred, value);
+        };
+
+        return constrained_codec<InnerCodec, decltype(merged_predicate)>{inner, std::move(merged_predicate)};
+    }
+
+    /** @brief Creates an optional version of this constrained codec */
+    constexpr auto optional() const noexcept;
+};
+
+/**
+ * @brief Helper function to create a constrained_codec
+ * @param inner The inner codec to wrap
+ * @param pred The predicate to validate values
+ * @return A constrained_codec wrapping the inner codec
+ */
+template<Codec InnerCodec, typename Predicate>
+constexpr auto constrain(const InnerCodec& inner, Predicate pred) {
+    return constrained_codec<InnerCodec, std::decay_t<Predicate>>(inner, std::move(pred));
+}
+
+} // namespace muesli
+
+#include <muesli/optional_codec>
+
+namespace muesli {
+/**
+ * @brief Implementation of constrained_codec::optional() method
+ *
+ * This must be defined after optional_codec is complete to avoid circular dependencies.
+ */
+template<Codec InnerCodec, typename Predicate>
+constexpr auto constrained_codec<InnerCodec, Predicate>::optional() const noexcept {
+    return optional_codec<constrained_codec<InnerCodec, Predicate>>{*this};
+}
+} // namespace muesli

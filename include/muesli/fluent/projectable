@@ -1,0 +1,130 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+namespace muesli {
+/** @brief Forward declaration of apply_codec */
+template<Codec ArgCodec, typename ValueType>
+requires(!std::same_as<typename ArgCodec::value_type, ValueType>)
+struct apply_codec;
+
+/** @brief Forward declaration of member_codec */
+template<Codec FieldCodec, auto MemberPtr>
+struct member_codec;
+
+/** @brief Forward declaration of projector_codec */
+template<typename Owner, Codec FieldCodec, typename Projector>
+struct projector_codec;
+} // namespace muesli
+
+namespace muesli::fluent {
+
+/**
+ * @brief Mixin providing .member<>() and .project<>() for member/projection codecs
+ *
+ * This mixin provides two methods for adapting codecs to structured data:
+ * - .member<&T::field>(): Bind this codec to a specific member of a struct
+ * - .project<Owner>(projector): Project from an owner type via custom transformation
+ *
+ * Used for:
+ * - Struct field serialisation
+ * - Custom value extraction/injection
+ * - Computed/derived field handling
+ *
+ * @code
+ * // Struct definition
+ * struct Person {
+ *     int id;
+ *     std::string name;
+ *     float height_meters;  // stored in metres internally
+ * };
+ *
+ * // Direct member binding
+ * auto person_codec = muesli::tuple_codec(
+ *     muesli::int32_codec.member<&Person::id>(),
+ *     muesli::string_codec.member<&Person::name>(),
+ *     muesli::float_codec.member<&Person::height_meters>()
+ * );
+ *
+ * Person person = {42, "Alice", 1.75f};
+ * auto encoded = person_codec.encode(person);
+ * Person decoded = person_codec.decode(encoded);
+ *
+ * // Custom projection: store height in centimetres
+ * struct HeightData { int centimeters; };
+ * auto height_cm = muesli::int32_codec
+ *     .project<Person>(
+ *         [](const Person& p) { return static_cast<int>(p.height_meters * 100); },
+ *         [](int cm) -> Person { Person p; p.height_meters = cm / 100.0f; return p; }
+ *     );
+ *
+ * // Computed field example: encode full name from first and last
+ * struct FullName { std::string first; std::string last; };
+ * auto display_name = muesli::string_codec
+ *     .project<FullName>(
+ *         [](const FullName& fn) { return fn.first + " " + fn.last; },
+ *         [](const std::string& s) {
+ *             size_t space = s.find(' ');
+ *             FullName fn;
+ *             if (space != std::string::npos) {
+ *                 fn.first = s.substr(0, space);
+ *                 fn.last = s.substr(space + 1);
+ *             }
+ *             return fn;
+ *         }
+ *     );
+ * @endcode
+ *
+ * @see member_codec - For binding to struct members
+ * @see projector_codec - For custom projections
+ */
+template<typename Derived>
+struct projectable {
+    /**
+     * @brief Binds this codec to a member of a struct
+     *
+     * Creates a member_codec that automatically extracts/injects the field
+     * from/to the owner struct during encode/decode operations.
+     *
+     * @tparam MemberPtr A pointer-to-member of form &OwnerType::memberName
+     * @return A member_codec<Derived, MemberPtr> wrapping this codec
+     *
+     * @code
+     * struct Record { int id; };
+     * auto id_codec = int32_codec.member<&Record::id>();
+     * Record rec{42};
+     * auto encoded = id_codec.encode(rec);
+     * @endcode
+     */
+    template<auto MemberPtr>
+    constexpr auto member() const noexcept {
+        return muesli::member_codec<Derived, MemberPtr>{static_cast<const Derived&>(*this)};
+    }
+
+    /**
+     * @brief Projects this codec from an owner type using a custom projector
+     *
+     * Creates a projector_codec with custom encode/decode transformation logic.
+     * Allows flexible field extraction and reconstruction.
+     *
+     * @tparam Owner The owner type from which to project
+     * @tparam Projector A callable that takes const Owner& and returns the member value
+     * @param proj The projector function
+     * @return A projector_codec wrapping this codec
+     */
+    template<typename Owner, typename Projector>
+    constexpr auto project(Projector proj) const noexcept {
+        return muesli::projector_codec<Owner, Derived, std::decay_t<Projector>>{
+            static_cast<const Derived&>(*this),
+            std::move(proj)
+        };
+    }
+};
+
+} // namespace muesli::fluent

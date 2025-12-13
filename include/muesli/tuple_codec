@@ -1,0 +1,226 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/member_codec>
+#include <muesli/util/type_traits>
+
+#include <tuple>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for tuples of codecs.
+ *
+ * The tuple_codec combines multiple element codecs into a single codec
+ * that encodes/decodes tuples by transforming each element through its
+ * corresponding codec.
+ * This is the foundation for encoding data structures.
+ *
+ * @tparam Codecs Variadic list of codecs (one per tuple element)
+ *
+ * Perfect for:
+ * - Protocol message fields (id, timestamp, status)
+ * - Heterogeneous data aggregation
+ * - Complex struct serialisation with member_codec
+ * - Function parameter bundles
+ *
+ * @code
+ * // Simple tuple: (int32, string, float)
+ * auto simple = tuple_codec(int32_codec, string_codec, float_codec);
+ * std::tuple<int32_t, std::string, float> data = {42, "hello", 3.14f};
+ * auto encoded = simple.encode(data);
+ * auto decoded = simple.decode(encoded);
+ *
+ * // Protocol message: version (uint8), id (uint32), timestamp (uint64)
+ * auto protocol_msg = tuple_codec(uint8_codec, uint32_codec, uint64_codec);
+ * std::tuple<uint8_t, uint32_t, uint64_t> msg = {1, 12345, time(nullptr)};
+ * auto encoded_msg = protocol_msg.encode(msg);
+ *
+ * // Nested tuples: person data with address
+ * auto address = tuple_codec(string_codec, string_codec, string_codec);  // road, city, code
+ * auto person = tuple_codec(string_codec, uint32_codec, address);        // name, age, address
+ * std::tuple<std::string, uint32_t, std::tuple<std::string, std::string, std::string>> billy
+ *     = {"Billy", 54, {"123 Fake Street", "That Island from Myst", "123 ABC"}};
+ * auto encoded = person.encode(billy);
+ *
+ * // With constraints: ensure name is not empty, age is reasonable
+ * auto constrained_person = person
+ *     .constrain([](const auto& t) { return !std::get<0>(t).empty() && std::get<1>(t) < 150; });
+ * @endcode
+ *
+ * @note Tuple elements are encoded/decoded in order
+ * @note All element codecs must satisfy the Codec concept
+ * @see member_codec - For binding tuple elements to struct members
+ * @see pair_codec - Specialised codec for 2-element tuples
+ */
+template<Codec... Codecs>
+struct tuple_codec : fluent::optionable<tuple_codec<Codecs...>>,
+                     fluent::constrainable<tuple_codec<Codecs...>>,
+                     fluent::transformable<tuple_codec<Codecs...>>,
+                     fluent::projectable<tuple_codec<Codecs...>>,
+                     fluent::constructable<tuple_codec<Codecs...>>,
+                     fluent::nullableable<tuple_codec<Codecs...>> {
+    /** @brief Value type is a tuple of all codec value types */
+    using value_type = std::tuple<typename Codecs::value_type...>;
+
+    /** @brief Tuple of codecs, one for each element */
+    std::tuple<Codecs...> codecs;
+
+    /** @brief Constructs a tuple_codec from the given element codecs */
+    explicit constexpr tuple_codec(const Codecs&... cs) noexcept : codecs(cs...) {}
+
+    /** @brief Returns a tuple_codec of the next codecs in the chain */
+    constexpr auto next_codec() const noexcept {
+        return next_codec_impl(std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Projects values from an owner object using each codec's projector */
+    template<typename Owner>
+    constexpr value_type project(const Owner& obj) const noexcept
+        requires(HasProjectFromOwner<Codecs, Owner> && ...)
+    {
+        return project_impl(obj, std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Encodes each tuple element using its corresponding codec */
+    constexpr auto encode(const value_type& value) const noexcept {
+        return encode_impl(value, std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Encodes each tuple element using its corresponding codec (rvalue overload) */
+    constexpr auto encode(value_type&& value) const noexcept {
+        return encode_impl_move(std::move(value), std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Decodes each encoded element using its corresponding codec */
+    constexpr value_type decode(const auto& value) const noexcept {
+        return decode_impl(value, std::index_sequence_for<Codecs...>{});
+    }
+
+    /** @brief Decodes each encoded element using its corresponding codec (rvalue overload) */
+    constexpr value_type decode(auto&& value) const noexcept {
+        return decode_impl_move(std::forward<decltype(value)>(value), std::index_sequence_for<Codecs...>{});
+    }
+
+private:
+    template<std::size_t... Is>
+    constexpr auto next_codec_impl(std::index_sequence<Is...>) const noexcept {
+        return tuple_codec<std::decay_t<decltype(std::get<Is>(codecs).next_codec())>...>(
+            std::get<Is>(codecs).next_codec()...
+        );
+    }
+
+    template<std::size_t... Is, typename Owner>
+    constexpr value_type project_impl(const Owner& obj, std::index_sequence<Is...>) const noexcept {
+        return value_type(std::get<Is>(codecs).project(obj)...);
+    }
+
+    template<std::size_t... Is>
+    constexpr auto encode_impl(const value_type& value, std::index_sequence<Is...>) const noexcept {
+        return std::tuple(std::get<Is>(codecs).encode(std::get<Is>(value))...);
+    }
+
+    template<std::size_t... Is>
+    constexpr auto encode_impl_move(value_type&& value, std::index_sequence<Is...>) const noexcept {
+        return std::tuple(std::get<Is>(codecs).encode(std::move(std::get<Is>(value)))...);
+    }
+
+    template<std::size_t... Is>
+    constexpr value_type decode_impl(const auto& value, std::index_sequence<Is...>) const noexcept {
+        // For const-ref tuples, pass const-refs to inner codecs
+        // They will handle const-ref to move-only type conversion
+        return value_type(std::get<Is>(codecs).decode(std::get<Is>(value))...);
+    }
+
+    template<std::size_t... Is>
+    constexpr value_type decode_impl_move(auto&& value, std::index_sequence<Is...>) const noexcept {
+        return value_type(std::get<Is>(codecs).decode(std::move(std::get<Is>(value)))...);
+    }
+};
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec for std::pair that delegates to tuple_codec
+ *
+ * The pair_codec is a specialised wrapper around tuple_codec that provides
+ * convenient encoding/decoding of std::pair types by converting to/from tuples.
+ *
+ * @tparam Codec1 Codec for the first element of the pair
+ * @tparam Codec2 Codec for the second element of the pair
+ *
+ * Example:
+ * ```cpp
+ * auto codec = pair_codec(int_codec, string_codec);
+ * std::pair<int, std::string> data = {42, "hello"};
+ * auto encoded = codec.encode(data);
+ * ```
+ */
+template<Codec Codec1, Codec Codec2>
+struct pair_codec : fluent::optionable<pair_codec<Codec1, Codec2>>,
+                    fluent::constrainable<pair_codec<Codec1, Codec2>>,
+                    fluent::transformable<pair_codec<Codec1, Codec2>>,
+                    fluent::projectable<pair_codec<Codec1, Codec2>>,
+                    fluent::constructable<pair_codec<Codec1, Codec2>>,
+                    fluent::nullableable<pair_codec<Codec1, Codec2>> {
+    /** @brief Value type is a std::pair of the codec value types */
+    using value_type = std::pair<typename Codec1::value_type, typename Codec2::value_type>;
+    /** @brief Internal tuple representation */
+    using tuple_type = std::tuple<typename Codec1::value_type, typename Codec2::value_type>;
+
+    /** @brief The underlying tuple_codec that performs actual encoding/decoding */
+    tuple_codec<Codec1, Codec2> codec;
+
+    /** @brief Constructs a pair_codec from two element codecs */
+    explicit constexpr pair_codec(const Codec1& c1, const Codec2& c2) noexcept : codec(c1, c2) {}
+
+    /** @brief Returns the next codec from the underlying tuple_codec */
+    constexpr auto next_codec() const noexcept {
+        return codec.next_codec();
+    }
+
+    /** @brief Projects values from an owner object into a pair */
+    template<typename Owner>
+    constexpr value_type project(const Owner& obj) const noexcept requires(
+        requires(const Codec1& c1, const Owner& o) { c1.project(o); } &&
+        requires(const Codec2& c2, const Owner& o) { c2.project(o); })
+    {
+        auto [first, second] = codec.project(obj);
+        return {first, second};
+    }
+
+    /** @brief Encodes a pair by converting to tuple and delegating to tuple_codec */
+    constexpr auto encode(const value_type& value) const noexcept {
+        return codec.encode(std::make_tuple(value.first, value.second));
+    }
+
+    /** @brief Encodes a pair by converting to tuple and delegating to tuple_codec (rvalue overload) */
+    constexpr auto encode(value_type&& value) const noexcept {
+        return codec.encode(std::make_tuple(std::move(value.first), std::move(value.second)));
+    }
+
+    /** @brief Decodes a value and converts the result tuple to a pair */
+    constexpr value_type decode(const auto& value) const {
+        auto [first, second] = codec.decode(value);
+        return {first, second};
+    }
+
+    /** @brief Decodes a value and converts the result tuple to a pair (rvalue overload) */
+    constexpr value_type decode(auto&& value) const {
+        auto [first, second] = codec.decode(std::forward<decltype(value)>(value));
+        return {std::move(first), std::move(second)};
+    }
+};
+
+} // namespace muesli
