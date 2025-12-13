@@ -1,0 +1,48 @@
+Checks: |
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-avoid-c-arrays,
+  modernize-deprecated-headers,
+  modernize-loop-convert,
+  modernize-use-emplace,
+  modernize-use-nullptr,
+  modernize-use-using,
+  readability-braces-around-statements,
+  readability-else-after-return,
+  readability-inconsistent-declaration-parameter-name,
+  readability-identifier-naming,
+  misc-unused-parameters,
+  llvm-include-order,
+  misc-include-cleaner
+
+HeaderFilterRegex: '^(include|tests)/'
+AnalyzeTemporaryDtors: false
+WarningsAsErrors: ''
+FormatStyle: none
+
+CheckOptions:
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: snake_case
+  - key: readability-identifier-naming.PublicMemberCase
+    value: snake_case
+  - key: readability-identifier-naming.ConstantCase
+    value: snake_case
+  - key: readability-identifier-naming.NamespaceCase
+    value: snake_case
+  - key: readability-identifier-naming.EnumCase
+    value: snake_case
+  - key: readability-identifier-naming.EnumConstantCase
+    value: snake_case
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: CamelCase
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: CamelCase

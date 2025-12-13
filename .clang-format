@@ -1,0 +1,31 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+SpacesInAngles: false
+SpaceBeforeParens: ControlStatements
+PointerAlignment: Left
+AlignTrailingComments: false
+SortIncludes: CaseSensitive
+NamespaceIndentation: None
+Cpp11BracedListStyle: true
+IncludeBlocks: Regroup
+KeepEmptyLinesAtTheStartOfBlocks: false
+BreakBeforeBinaryOperators: None
+ContinuationIndentWidth: 4
+AlwaysBreakTemplateDeclarations: Yes
+IndentRequiresClause: false
+RequiresClausePosition: WithPreceding
+SpaceAfterTemplateKeyword: false
+IncludeCategories:
+  - Regex:           '^<muesli/'
+    Priority:        1
+  - Regex:           '^<'
+    Priority:        2
+  - Regex:           '.*'
+    Priority:        3

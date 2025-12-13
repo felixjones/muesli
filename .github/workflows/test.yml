@@ -1,0 +1,155 @@
+# AI Generated file! TODO: Replace with human code
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux with GCC
+          - os: ubuntu-latest
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+
+          # Linux with Clang
+          - os: ubuntu-latest
+            compiler: clang
+            cc: clang-17
+            cxx: clang++-17
+
+          # macOS with Clang (default)
+          - os: macos-latest
+            compiler: clang
+            cc: clang
+            cxx: clang++
+
+          # macOS with GCC
+          - os: macos-latest
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+
+          # Windows with MSVC
+          - os: windows-latest
+            compiler: msvc
+            cc: cl
+            cxx: cl
+
+          # Windows with Clang-cl
+          - os: windows-latest
+            compiler: clang-cl
+            cc: clang-cl
+            cxx: clang-cl
+
+          # Windows with MinGW (using Git Bash to avoid 0xc0000139 runtime linking issues)
+          - os: windows-latest
+            compiler: mingw
+            cc: gcc
+            cxx: g++
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install GCC 13 (Ubuntu)
+        if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'gcc'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13
+
+      - name: Install Clang 17 (Ubuntu)
+        if: matrix.os == 'ubuntu-latest' && matrix.compiler == 'clang'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+          sudo apt-get install -y clang-17
+
+      - name: Install GCC 13 (macOS)
+        if: matrix.os == 'macos-latest' && matrix.compiler == 'gcc'
+        run: |
+          brew install gcc@13
+          echo "CC=gcc-13" >> $GITHUB_ENV
+          echo "CXX=g++-13" >> $GITHUB_ENV
+
+      - name: Setup MSVC (Windows)
+        if: matrix.os == 'windows-latest' && matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Clang-cl (Windows)
+        if: matrix.os == 'windows-latest' && matrix.compiler == 'clang-cl'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup MinGW (Windows)
+        if: matrix.os == 'windows-latest' && matrix.compiler == 'mingw'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Configure CMake (Unix)
+        if: matrix.os != 'windows-latest'
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja -DBUILD_TESTING=ON -DBUILD_EXAMPLES=ON
+
+      - name: Configure CMake (Windows MSVC/Clang-cl)
+        if: matrix.os == 'windows-latest' && (matrix.compiler == 'msvc' || matrix.compiler == 'clang-cl')
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DBUILD_TESTING=ON -DBUILD_EXAMPLES=ON
+
+      - name: Configure CMake (MinGW)
+        if: matrix.os == 'windows-latest' && matrix.compiler == 'mingw'
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/msys64/mingw64/bin:$PATH"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -G Ninja -DBUILD_TESTING=ON -DBUILD_EXAMPLES=ON
+
+      - name: Build (Unix/Windows MSVC/Clang-cl)
+        if: matrix.compiler != 'mingw'
+        run: cmake --build build --config Release
+
+      - name: Build (MinGW)
+        if: matrix.compiler == 'mingw'
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/msys64/mingw64/bin:$PATH"
+          cmake --build build --config Release
+
+      - name: Run tests (Unix/Windows MSVC/Clang-cl)
+        if: matrix.compiler != 'mingw'
+        run: ctest --test-dir build --output-on-failure --build-config Release
+
+      - name: Run tests (MinGW)
+        if: matrix.compiler == 'mingw'
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/msys64/mingw64/bin:$PATH"
+          ctest --test-dir build --output-on-failure --build-config Release
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.compiler }}
+          path: |
+            build/Testing/Temporary/
+            build/**/*.log
+          retention-days: 7

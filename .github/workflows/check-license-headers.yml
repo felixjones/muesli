@@ -1,0 +1,26 @@
+# AI Generated file! TODO: Replace with human code
+name: Check License Headers
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-headers:
+    runs-on: ubuntu-latest
+    name: Verify BSD 3-Clause License Headers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for copyright date validation
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Check license headers
+        run: python tools/check_license_headers.py
+        working-directory: ${{ github.workspace }}

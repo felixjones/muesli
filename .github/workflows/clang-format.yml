@@ -1,0 +1,79 @@
+# AI Generated file! TODO: Replace with human code
+name: Clang Format
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**/*.cpp'
+      - '**/*.cc'
+      - '**/*.cxx'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.ixx'
+      - '**/*.txx'
+      - '.clang-format'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Run clang-format
+        run: |
+          set -e
+          clang-format --version
+          
+          # Build exclusion pattern from .clang-format-ignore if it exists
+          EXCLUDE_PATTERN=""
+          if [ -f .clang-format-ignore ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              # Skip empty lines and comments
+              [[ -z "$line" || "$line" =~ ^# ]] && continue
+              EXCLUDE_PATTERN="$EXCLUDE_PATTERN -not -path './$line'"
+            done < .clang-format-ignore
+          fi
+          
+          # Find and format files, excluding those in .clang-format-ignore
+          eval "find . \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.h' -o -name '*.hpp' -o -name '*.ixx' -o -name '*.txx' \) \
+            -not -path './cmake-build-*/*' \
+            -not -path './.git/*' \
+            $EXCLUDE_PATTERN \
+            -print0 | xargs -0 clang-format -i"
+
+      - name: Commit formatting changes
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: apply clang-format" || true
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Add PR comment on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ clang-format failed to apply. Please check the workflow logs.'
+            })

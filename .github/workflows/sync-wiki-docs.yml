@@ -1,0 +1,90 @@
+# AI Generated file! TODO: Replace with human code
+name: Sync Wiki Documentation
+
+on:
+  push:
+    branches: [ main ]  # Only sync when merged to main
+    paths:
+      - 'include/**'
+      - 'tools/wiki_gen.py'
+      - '.github/workflows/sync-wiki-docs.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    name: Update Wiki from Source Documentation
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout Wiki
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Configure Git for Wiki
+        run: |
+          cd wiki-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Generate and sync documentation
+        run: |
+          # Generate wiki pages from headers
+          python tools/wiki_gen.py --output wiki-repo
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+
+      - name: Create Wiki PR or push if already on main
+        id: create-wiki-pr
+        run: |
+          cd wiki-repo
+          
+          # Check if there are changes
+          if git status --porcelain | grep -q .; then
+            # Create a branch for the wiki changes
+            BRANCH_NAME="docs/auto-sync-$(date +%s)"
+            git checkout -b "$BRANCH_NAME"
+            git add .
+            git commit -m "Auto-sync documentation from main branch (commit: ${{ github.sha }})"
+            
+            # Push the branch
+            git push origin "$BRANCH_NAME"
+            
+            echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge and push to Wiki
+        if: steps.create-wiki-pr.outputs.has_changes == 'true'
+        run: |
+          cd wiki-repo
+          git checkout master
+          git merge "${{ steps.create-wiki-pr.outputs.branch }}" --no-ff -m "Auto-sync documentation from main branch - Source commit: ${{ github.sha }}, Triggered by: ${{ github.event_name }}"
+          git push origin master
+
+      - name: Report results
+        if: always()
+        run: |
+          echo "✓ Wiki documentation sync workflow completed"
+          if [ "${{ steps.create-wiki-pr.outputs.has_changes }}" = "true" ]; then
+            echo "✓ Created Wiki PR that will auto-merge"
+          else
+            echo "ℹ No documentation changes detected"
+          fi

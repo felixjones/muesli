@@ -1,0 +1,74 @@
+# AI Generated file! TODO: Replace with human code
+name: Clang Tidy
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'include/**'
+      - 'tests/**'
+      - '.clang-tidy'
+      - '.github/workflows/clang-tidy.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+    # Only auto-push to same-repo PRs; skip forks to avoid permission issues
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy
+
+      - name: Configure CMake (compile_commands)
+        run: |
+          cmake -S . -B cmake-build-tidy -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          # Optional: build to ensure compile_commands are valid
+          cmake --build cmake-build-tidy --config Release -- -j2
+
+      - name: Run clang-tidy (fix in-place)
+        env:
+          CLANG_TIDY: clang-tidy
+        run: |
+          set -e
+          # run-clang-tidy picks up compile_commands.json from cmake-build-tidy
+          run-clang-tidy -p cmake-build-tidy \
+            include tests \
+            -j 2 \
+            -format-style=file \
+            -fix
+
+      - name: Commit formatting fixes
+        run: |
+          if git diff --quiet; then
+            echo "No clang-tidy fixes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: apply clang-tidy fixes" || true
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Comment on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ clang-tidy failed. Please check the workflow logs for details.'
+            })

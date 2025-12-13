@@ -1,0 +1,33 @@
+# Build directories
+cmake-build*/
+build/
+build-*/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated documentation
+temp_wiki/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Compiled binaries
+*.exe
+*.out
+*.app
+*.o
+*.obj
+
+# Output files
+*.bin
