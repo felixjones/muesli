@@ -138,10 +138,7 @@ g++ -std=c++20 -I/path/to/muesli/include your_file.cpp
 For comprehensive documentation, guides, examples, and API reference, see the **[Muesli Wiki](https://github.com/felixjones/muesli/wiki)**.
 
 Quick links:
-- [Getting Started](https://github.com/felixjones/muesli/wiki/Getting-Started)
-- [Building Codecs](https://github.com/felixjones/muesli/wiki/Building-Codecs)
 - [API Reference](https://github.com/felixjones/muesli/wiki/API-Reference)
-- [Examples](https://github.com/felixjones/muesli/wiki/Examples)
 
 ## Planned Features
 
