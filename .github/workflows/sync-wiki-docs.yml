@@ -38,23 +38,28 @@ jobs:
         continue-on-error: true
 
       - name: Check if wiki checkout succeeded
+        id: wiki-check
         run: |
-          if [ ! -d "wiki-repo" ] || [ -z "$(ls -A wiki-repo)" ]; then
+          if [ -d "wiki-repo" ] && [ -n "$(ls -A wiki-repo)" ]; then
+            echo "wiki_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "wiki_available=false" >> $GITHUB_OUTPUT
             echo "⚠ Wiki checkout failed - WIKI_PAT may not be configured"
             echo "To enable wiki syncing, create a Personal Access Token and add it as WIKI_PAT secret"
-            exit 0
           fi
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+        if: steps.wiki-check.outputs.wiki_available == 'true'
 
       - name: Configure Git for Wiki
         run: |
           cd wiki-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+        if: steps.wiki-check.outputs.wiki_available == 'true'
 
       - name: Generate and sync documentation
         run: |
@@ -65,43 +70,37 @@ jobs:
           GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        if: steps.wiki-check.outputs.wiki_available == 'true'
 
-      - name: Create Wiki PR or push if already on main
-        id: create-wiki-pr
+      - name: Commit and push to Wiki
+        id: push-wiki
         run: |
           cd wiki-repo
           
           # Check if there are changes
           if git status --porcelain | grep -q .; then
-            # Create a branch for the wiki changes
-            BRANCH_NAME="docs/auto-sync-$(date +%s)"
-            git checkout -b "$BRANCH_NAME"
             git add .
-            git commit -m "Auto-sync documentation from main branch (commit: ${{ github.sha }})"
+            git commit -m "Auto-sync documentation from main branch
             
-            # Push the branch
-            git push origin "$BRANCH_NAME"
+            Source commit: ${{ github.sha }}
+            Triggered by: ${{ github.event_name }}"
             
-            echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+            # Push directly to master (wikis don't support PRs)
+            git push origin master
+            
             echo "has_changes=true" >> $GITHUB_OUTPUT
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
           fi
+        if: steps.wiki-check.outputs.wiki_available == 'true'
 
-      - name: Merge and push to Wiki
-        if: steps.create-wiki-pr.outputs.has_changes == 'true'
-        run: |
-          cd wiki-repo
-          git checkout master
-          git merge "${{ steps.create-wiki-pr.outputs.branch }}" --no-ff -m "Auto-sync documentation from main branch - Source commit: ${{ github.sha }}, Triggered by: ${{ github.event_name }}"
-          git push origin master
 
       - name: Report results
         if: always()
         run: |
           echo "✓ Wiki documentation sync workflow completed"
-          if [ "${{ steps.create-wiki-pr.outputs.has_changes }}" = "true" ]; then
-            echo "✓ Created Wiki PR that will auto-merge"
+          if [ "${{ steps.push-wiki.outputs.has_changes }}" = "true" ]; then
+            echo "✓ Wiki updated with latest documentation"
           else
             echo "ℹ No documentation changes detected"
           fi
