@@ -1,4 +1,7 @@
 # AI Generated file! TODO: Replace with human code
+# NOTE: This workflow requires a WIKI_PAT secret to be set up in repository settings
+# The secret should be a Personal Access Token with 'public_repo' scope
+# If WIKI_PAT is not set, the workflow will be skipped
 name: Sync Wiki Documentation
 
 on:
@@ -10,10 +13,15 @@ on:
       - '.github/workflows/sync-wiki-docs.yml'
   workflow_dispatch:  # Allow manual trigger
 
+permissions:
+  contents: read
+
 jobs:
   sync-docs:
     runs-on: ubuntu-latest
     name: Update Wiki from Source Documentation
+    # Skip if WIKI_PAT is not configured
+    if: secrets.WIKI_PAT != ''
 
     steps:
       - name: Checkout repository
@@ -26,7 +34,7 @@ jobs:
         with:
           repository: ${{ github.repository }}.wiki
           path: wiki-repo
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.WIKI_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
