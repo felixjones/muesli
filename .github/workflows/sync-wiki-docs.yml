@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Update Wiki from Source Documentation
     # Skip if WIKI_PAT is not configured
-    if: secrets.WIKI_PAT != ''
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit != null
 
     steps:
       - name: Checkout repository
@@ -35,6 +35,15 @@ jobs:
           repository: ${{ github.repository }}.wiki
           path: wiki-repo
           token: ${{ secrets.WIKI_PAT }}
+        continue-on-error: true
+
+      - name: Check if wiki checkout succeeded
+        run: |
+          if [ ! -d "wiki-repo" ] || [ -z "$(ls -A wiki-repo)" ]; then
+            echo "⚠ Wiki checkout failed - WIKI_PAT may not be configured"
+            echo "To enable wiki syncing, create a Personal Access Token and add it as WIKI_PAT secret"
+            exit 0
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v4
