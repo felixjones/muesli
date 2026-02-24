@@ -169,6 +169,23 @@ if(BUILD_TESTING)
         target_link_libraries(test_json_jsoncpp PRIVATE jsoncpp_static)
         add_test(NAME test_json_jsoncpp COMMAND test_json_jsoncpp)
     endif()
+
+    # Boost.JSON
+    option(MUESLI_TEST_BOOST_JSON "Build Boost.JSON backend tests" ON)
+    if(MUESLI_TEST_BOOST_JSON)
+        set(BOOST_INCLUDE_LIBRARIES json)
+        set(BOOST_ENABLE_CMAKE ON)
+        FetchContent_Declare(Boost
+            GIT_REPOSITORY https://github.com/boostorg/boost.git
+            GIT_TAG        boost-1.87.0
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(Boost)
+
+        add_muesli_test_exe(test_json_boost tests/test_json_boost.cpp)
+        target_link_libraries(test_json_boost PRIVATE Boost::json)
+        add_test(NAME test_json_boost COMMAND test_json_boost)
+    endif()
 endif()
 
 if(BUILD_EXAMPLES)
