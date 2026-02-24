@@ -133,6 +133,22 @@ if(BUILD_TESTING)
         target_link_libraries(test_json_or_else PRIVATE nlohmann_json::nlohmann_json)
         add_test(NAME test_json_or_else COMMAND test_json_or_else)
     endif()
+
+    # RapidJSON
+    option(MUESLI_TEST_RAPIDJSON "Build RapidJSON backend tests" ON)
+    if(MUESLI_TEST_RAPIDJSON)
+        FetchContent_Declare(rapidjson
+            GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
+            GIT_TAG        v1.1.0
+            GIT_SHALLOW    TRUE
+            SOURCE_SUBDIR  _do_not_build
+        )
+        FetchContent_MakeAvailable(rapidjson)
+
+        add_muesli_test_exe(test_json_rapidjson tests/test_json_rapidjson.cpp)
+        target_include_directories(test_json_rapidjson SYSTEM PRIVATE ${rapidjson_SOURCE_DIR}/include)
+        add_test(NAME test_json_rapidjson COMMAND test_json_rapidjson)
+    endif()
 endif()
 
 if(BUILD_EXAMPLES)

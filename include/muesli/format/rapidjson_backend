@@ -1,0 +1,187 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/format/json_backend>
+
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace muesli {
+
+/**
+ * @brief Owning wrapper around a RapidJSON value with shared allocator
+ *
+ * RapidJSON values do not own their allocator, so this wrapper pairs a
+ * rapidjson::Value with a shared rapidjson::Document (which provides
+ * the allocator). All copies share the same allocator.
+ */
+struct rapidjson_value {
+    std::shared_ptr<rapidjson::Document> doc;
+    rapidjson::Value val;
+
+    rapidjson_value() : doc(std::make_shared<rapidjson::Document>()) {}
+
+    explicit rapidjson_value(std::shared_ptr<rapidjson::Document> d)
+        : doc(std::move(d)) {}
+
+    rapidjson_value(const rapidjson_value& other)
+        : doc(other.doc) {
+        val.CopyFrom(other.val, doc->GetAllocator());
+    }
+
+    rapidjson_value& operator=(const rapidjson_value& other) {
+        if (this != &other) {
+            doc = other.doc;
+            val.CopyFrom(other.val, doc->GetAllocator());
+        }
+        return *this;
+    }
+
+    rapidjson_value(rapidjson_value&&) noexcept = default;
+    rapidjson_value& operator=(rapidjson_value&&) noexcept = default;
+
+    rapidjson::Document::AllocatorType& allocator() { return doc->GetAllocator(); }
+};
+
+/**
+ * @brief JsonBackend implementation for RapidJSON
+ *
+ * Adapts RapidJSON (https://rapidjson.org/) to the muesli JsonBackend concept.
+ * Uses rapidjson_value as the value_type, which wraps a rapidjson::Value with
+ * a shared allocator.
+ *
+ * @code
+ * #include <muesli/format/json_format>
+ * #include <muesli/format/rapidjson_backend>
+ * #include <muesli/codecs>
+ *
+ * auto fmt = muesli::make_json_format<muesli::rapidjson_backend>(muesli::int32_codec);
+ * auto j = fmt.serialize(42);
+ * // Convert to string via RapidJSON writer
+ * rapidjson::StringBuffer buf;
+ * rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
+ * j.val.Accept(writer);
+ * std::string s = buf.GetString(); // "42"
+ * @endcode
+ */
+struct rapidjson_backend {
+    using value_type = rapidjson_value;
+
+    // Factory
+    static value_type make_null() {
+        value_type v;
+        v.val.SetNull();
+        return v;
+    }
+    static value_type make_bool(bool b) {
+        value_type v;
+        v.val.SetBool(b);
+        return v;
+    }
+    static value_type make_int(std::int64_t i) {
+        value_type v;
+        v.val.SetInt64(i);
+        return v;
+    }
+    static value_type make_uint(std::uint64_t u) {
+        value_type v;
+        v.val.SetUint64(u);
+        return v;
+    }
+    static value_type make_float(double d) {
+        value_type v;
+        v.val.SetDouble(d);
+        return v;
+    }
+    static value_type make_string(std::string s) {
+        value_type v;
+        v.val.SetString(s.c_str(), static_cast<rapidjson::SizeType>(s.size()), v.allocator());
+        return v;
+    }
+    static value_type make_array() {
+        value_type v;
+        v.val.SetArray();
+        return v;
+    }
+    static value_type make_object() {
+        value_type v;
+        v.val.SetObject();
+        return v;
+    }
+
+    // Array operations
+    static void array_push_back(value_type& arr, const value_type& elem) {
+        rapidjson::Value copy;
+        copy.CopyFrom(elem.val, arr.allocator());
+        arr.val.PushBack(copy.Move(), arr.allocator());
+    }
+    static std::size_t array_size(const value_type& arr) {
+        return arr.val.Size();
+    }
+    static value_type array_at(const value_type& arr, std::size_t idx) {
+        value_type result;
+        result.doc = arr.doc;
+        result.val.CopyFrom(arr.val[static_cast<rapidjson::SizeType>(idx)], result.allocator());
+        return result;
+    }
+
+    // Object operations
+    static void object_set(value_type& obj, const std::string& key, const value_type& val) {
+        rapidjson::Value k(key.c_str(), static_cast<rapidjson::SizeType>(key.size()), obj.allocator());
+        rapidjson::Value copy;
+        copy.CopyFrom(val.val, obj.allocator());
+        obj.val.AddMember(k.Move(), copy.Move(), obj.allocator());
+    }
+    static value_type object_get(const value_type& obj, const std::string& key) {
+        value_type result;
+        result.doc = obj.doc;
+        auto it = obj.val.FindMember(key.c_str());
+        if (it != obj.val.MemberEnd()) {
+            result.val.CopyFrom(it->value, result.allocator());
+        } else {
+            result.val.SetNull();
+        }
+        return result;
+    }
+    static bool object_has_key(const value_type& obj, const std::string& key) {
+        return obj.val.HasMember(key.c_str());
+    }
+    static std::vector<std::string> object_keys(const value_type& obj) {
+        std::vector<std::string> keys;
+        for (auto it = obj.val.MemberBegin(); it != obj.val.MemberEnd(); ++it) {
+            keys.emplace_back(it->name.GetString(), it->name.GetStringLength());
+        }
+        return keys;
+    }
+
+    // Type queries
+    static bool is_null(const value_type& v) { return v.val.IsNull(); }
+    static bool is_bool(const value_type& v) { return v.val.IsBool(); }
+    static bool is_integer(const value_type& v) { return v.val.IsInt64() || v.val.IsUint64(); }
+    static bool is_floating(const value_type& v) { return v.val.IsDouble() && !v.val.IsInt64() && !v.val.IsUint64(); }
+    static bool is_string(const value_type& v) { return v.val.IsString(); }
+    static bool is_array(const value_type& v) { return v.val.IsArray(); }
+    static bool is_object(const value_type& v) { return v.val.IsObject(); }
+
+    // Accessors
+    static bool as_bool(const value_type& v) { return v.val.GetBool(); }
+    static std::int64_t as_int64(const value_type& v) { return v.val.GetInt64(); }
+    static std::uint64_t as_uint64(const value_type& v) { return v.val.GetUint64(); }
+    static double as_double(const value_type& v) { return v.val.GetDouble(); }
+    static std::string as_string(const value_type& v) {
+        return std::string(v.val.GetString(), v.val.GetStringLength());
+    }
+};
+
+} // namespace muesli
