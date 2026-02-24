@@ -107,6 +107,32 @@ if(BUILD_TESTING)
 
     add_muesli_test_exe(test_json_format tests/test_json_format.cpp)
     add_test(NAME test_json_format COMMAND test_json_format)
+
+    include(FetchContent)
+
+    # nlohmann/json
+    option(MUESLI_TEST_NLOHMANN_JSON "Build nlohmann/json backend tests" ON)
+    if(MUESLI_TEST_NLOHMANN_JSON)
+        FetchContent_Declare(nlohmann_json
+            GIT_REPOSITORY https://github.com/nlohmann/json.git
+            GIT_TAG        v3.11.3
+            GIT_SHALLOW    TRUE
+        )
+        set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(nlohmann_json)
+
+        add_muesli_test_exe(test_json_nlohmann tests/test_json_nlohmann.cpp)
+        target_link_libraries(test_json_nlohmann PRIVATE nlohmann_json::nlohmann_json)
+        add_test(NAME test_json_nlohmann COMMAND test_json_nlohmann)
+
+        add_muesli_test_exe(test_named_member tests/test_named_member.cpp)
+        target_link_libraries(test_named_member PRIVATE nlohmann_json::nlohmann_json)
+        add_test(NAME test_named_member COMMAND test_named_member)
+
+        add_muesli_test_exe(test_json_or_else tests/test_json_or_else.cpp)
+        target_link_libraries(test_json_or_else PRIVATE nlohmann_json::nlohmann_json)
+        add_test(NAME test_json_or_else COMMAND test_json_or_else)
+    endif()
 endif()
 
 if(BUILD_EXAMPLES)
