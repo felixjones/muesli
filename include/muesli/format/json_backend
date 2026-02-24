@@ -1,0 +1,140 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <concepts>
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+namespace muesli {
+
+/**
+ * @brief Trait to detect character types used for string detection
+ *
+ * Used by json_format to detect when a range_holder<CharT> represents a string
+ * and should be serialized as a JSON string rather than a JSON array.
+ */
+template<typename T>
+struct is_char_type : std::false_type {};
+
+template<>
+struct is_char_type<char> : std::true_type {};
+template<>
+struct is_char_type<wchar_t> : std::true_type {};
+template<>
+struct is_char_type<char8_t> : std::true_type {};
+template<>
+struct is_char_type<char16_t> : std::true_type {};
+template<>
+struct is_char_type<char32_t> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_char_type_v = is_char_type<T>::value;
+
+/**
+ * @brief Trait to detect std::pair types
+ *
+ * Used by json_format to detect when a range of pairs with string-like keys
+ * should be serialized as a JSON object rather than a JSON array.
+ */
+template<typename>
+struct is_pair : std::false_type {};
+
+template<typename T1, typename T2>
+struct is_pair<std::pair<T1, T2>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_pair_v = is_pair<T>::value;
+
+/**
+ * @brief Trait to detect pairs with std::string keys (map-like elements)
+ *
+ * Used by json_format to detect when a range of pairs should be serialized
+ * as a JSON object (string keys -> values) rather than a JSON array.
+ */
+template<typename T>
+struct is_string_keyed_pair : std::false_type {};
+
+template<typename V>
+struct is_string_keyed_pair<std::pair<std::string, V>> : std::true_type {};
+
+template<typename V>
+struct is_string_keyed_pair<std::pair<const std::string, V>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_string_keyed_pair_v = is_string_keyed_pair<T>::value;
+
+/**
+ * @brief Concept for JSON backend implementations
+ *
+ * A JsonBackend provides a value_type (the JSON DOM node) and operations
+ * to create, query, and access JSON values. Implementations adapt specific
+ * JSON libraries (nlohmann/json, rapidjson, simdjson, etc.) to this interface.
+ *
+ * Required operations:
+ * - Factory: make_null, make_bool, make_int, make_uint, make_float, make_string
+ * - Factory: make_array, make_object
+ * - Array ops: array_push_back, array_size, array_at
+ * - Object ops: object_set, object_get, object_has_key, object_keys
+ * - Type queries: is_null, is_bool, is_integer, is_floating, is_string, is_array, is_object
+ * - Accessors: as_bool, as_int64, as_uint64, as_double, as_string
+ *
+ * @code
+ * // Example minimal backend sketch:
+ * struct my_json_backend {
+ *     using value_type = nlohmann::json;
+ *     static value_type make_null() { return nullptr; }
+ *     static value_type make_bool(bool b) { return b; }
+ *     // ... etc
+ * };
+ * @endcode
+ */
+template<typename B>
+concept JsonBackend = requires(typename B::value_type& v, const typename B::value_type& cv,
+                               const std::string& key, std::size_t idx) {
+    // Factory
+    { B::make_null() } -> std::convertible_to<typename B::value_type>;
+    { B::make_bool(true) } -> std::convertible_to<typename B::value_type>;
+    { B::make_int(std::int64_t{}) } -> std::convertible_to<typename B::value_type>;
+    { B::make_uint(std::uint64_t{}) } -> std::convertible_to<typename B::value_type>;
+    { B::make_float(double{}) } -> std::convertible_to<typename B::value_type>;
+    { B::make_string(std::string{}) } -> std::convertible_to<typename B::value_type>;
+    { B::make_array() } -> std::convertible_to<typename B::value_type>;
+    { B::make_object() } -> std::convertible_to<typename B::value_type>;
+
+    // Array operations
+    { B::array_push_back(v, cv) };
+    { B::array_size(cv) } -> std::convertible_to<std::size_t>;
+    { B::array_at(cv, idx) } -> std::convertible_to<const typename B::value_type&>;
+
+    // Object operations
+    { B::object_set(v, key, cv) };
+    { B::object_get(cv, key) } -> std::convertible_to<const typename B::value_type&>;
+    { B::object_has_key(cv, key) } -> std::convertible_to<bool>;
+    { B::object_keys(cv) } -> std::convertible_to<std::vector<std::string>>;
+
+    // Type queries
+    { B::is_null(cv) } -> std::convertible_to<bool>;
+    { B::is_bool(cv) } -> std::convertible_to<bool>;
+    { B::is_integer(cv) } -> std::convertible_to<bool>;
+    { B::is_floating(cv) } -> std::convertible_to<bool>;
+    { B::is_string(cv) } -> std::convertible_to<bool>;
+    { B::is_array(cv) } -> std::convertible_to<bool>;
+    { B::is_object(cv) } -> std::convertible_to<bool>;
+
+    // Accessors
+    { B::as_bool(cv) } -> std::convertible_to<bool>;
+    { B::as_int64(cv) } -> std::convertible_to<std::int64_t>;
+    { B::as_uint64(cv) } -> std::convertible_to<std::uint64_t>;
+    { B::as_double(cv) } -> std::convertible_to<double>;
+    { B::as_string(cv) } -> std::convertible_to<std::string>;
+};
+
+} // namespace muesli

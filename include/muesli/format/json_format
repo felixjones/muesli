@@ -1,0 +1,784 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/format/json_backend>
+#include <muesli/util/concepts>
+#include <muesli/util/type_traits>
+
+#include <cassert>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <variant>
+#include <vector>
+
+namespace muesli {
+
+namespace json_detail {
+
+    // True if T is std::basic_string<CharT, ...>
+    template<typename T> struct is_std_string : std::false_type {};
+    template<typename C, typename Tr, typename A>
+    struct is_std_string<std::basic_string<C, Tr, A>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_std_string_v = is_std_string<std::decay_t<T>>::value;
+
+    // True if T is an iterable container with .size() but NOT a string
+    template<typename T, typename = void>
+    struct is_sized_container : std::false_type {};
+    template<typename T>
+    struct is_sized_container<T, std::void_t<
+        decltype(std::declval<const T&>().begin()),
+        decltype(std::declval<const T&>().end()),
+        decltype(std::declval<const T&>().size())
+    >> : std::bool_constant<!is_std_string_v<T>> {};
+    template<typename T>
+    inline constexpr bool is_sized_container_v = is_sized_container<std::decay_t<T>>::value;
+
+    // SFINAE-safe: true if T is a container whose value_type is a string-keyed pair
+    template<typename T>
+    concept StringKeyedPairContainer =
+        is_sized_container_v<std::decay_t<T>> &&
+        requires { typename std::decay_t<T>::value_type; } &&
+        is_string_keyed_pair_v<typename std::decay_t<T>::value_type>;
+
+    // SFINAE-safe: true if T is a container but NOT a string-keyed-pair container
+    template<typename T>
+    concept NonMapContainer =
+        is_sized_container_v<std::decay_t<T>> &&
+        !StringKeyedPairContainer<T>;
+
+    // SFINAE-safe: true if T is a range_holder of char-like elements
+    template<typename T>
+    concept CharRangeHolder =
+        is_range_holder_v<std::decay_t<T>> &&
+        requires { typename std::decay_t<T>::value_type; } &&
+        is_char_type_v<typename std::decay_t<T>::value_type>;
+
+    // SFINAE-safe: true if T is a range_holder of string-keyed pairs
+    template<typename T>
+    concept PairRangeHolder =
+        is_range_holder_v<std::decay_t<T>> &&
+        requires { typename std::decay_t<T>::value_type; } &&
+        is_string_keyed_pair_v<typename std::decay_t<T>::value_type>;
+
+    // SFINAE-safe: true if T is a range_holder of non-char, non-pair elements
+    template<typename T>
+    concept GeneralRangeHolder =
+        is_range_holder_v<std::decay_t<T>> &&
+        requires { typename std::decay_t<T>::value_type; } &&
+        !is_char_type_v<typename std::decay_t<T>::value_type> &&
+        !is_string_keyed_pair_v<typename std::decay_t<T>::value_type>;
+
+    // True if T behaves like std::optional (has has_value() and operator*)
+    template<typename T, typename = void>
+    struct is_optional_like : std::false_type {};
+    template<typename T>
+    struct is_optional_like<T, std::void_t<
+        decltype(std::declval<const T&>().has_value()),
+        decltype(*std::declval<const T&>())
+    >> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_optional_like_v = is_optional_like<std::decay_t<T>>::value;
+
+    // Gets element codec from codec or codec.arg_codec
+    template<typename Codec>
+    constexpr auto get_element_codec(const Codec& c) {
+        if constexpr (requires { c.element_codec; }) {
+            return c.element_codec;
+        } else if constexpr (requires { c.arg_codec.element_codec; }) {
+            return c.arg_codec.element_codec;
+        } else if constexpr (requires { c.get_element_codec(); }) {
+            return c.get_element_codec();
+        }
+    }
+
+    // Gets the value_codec for optional-like codecs
+    template<typename Codec>
+    constexpr auto get_value_codec(const Codec& c) {
+        if constexpr (requires { c.value_codec; }) {
+            return c.value_codec;
+        } else if constexpr (requires { c.arg_codec.value_codec; }) {
+            return c.arg_codec.value_codec;
+        } else if constexpr (requires { c.get_value_codec(); }) {
+            return c.get_value_codec();
+        }
+    }
+
+    // True if codec (or codec.arg_codec) has an element_codec
+    template<typename Codec>
+    concept HasElementCodec = requires(const Codec& c) { c.element_codec; } ||
+                            requires(const Codec& c) { c.arg_codec.element_codec; } ||
+                            requires(const Codec& c) { c.get_element_codec(); };
+
+    // True if codec (or codec.arg_codec) has a value_codec
+    template<typename Codec>
+    concept HasValueCodec = requires(const Codec& c) { c.value_codec; } ||
+                          requires(const Codec& c) { c.arg_codec.value_codec; } ||
+                          requires(const Codec& c) { c.get_value_codec(); };
+
+    // SFINAE-safe extraction of element_codec::value_type (void when element_codec missing)
+    template<typename C, typename = void>
+    struct element_value_type_or_void { using type = void; };
+    template<typename C>
+    struct element_value_type_or_void<C, std::void_t<decltype(std::declval<C&>().element_codec)>> {
+        using type = typename std::decay_t<decltype(std::declval<C&>().element_codec)>::value_type;
+    };
+    template<typename C>
+    using element_value_type_or_void_t = typename element_value_type_or_void<C>::type;
+} // namespace json_detail
+
+
+/**
+ * @category Format Classes
+ * @brief JSON serialization format for encoding/decoding codec values
+ *
+ * The json_format natively handles high-level C++ types before falling through
+ * to the codec chain for types it cannot handle directly:
+ *
+ * Native handling (bypasses codec chain):
+ * - bool -> JSON bool
+ * - Signed/unsigned integral -> JSON integer (handles varints natively)
+ * - Floating point -> JSON number
+ * - std::monostate -> JSON null
+ * - std::string / std::basic_string -> JSON string
+ * - std::optional (when codec has value_codec) -> JSON null or inner value
+ * - Containers of string-keyed pairs (when codec has element_codec) -> JSON object
+ * - Containers (when codec has element_codec) -> JSON array
+ *
+ * Codec-chain handling (for struct wrappers, transforms, etc.):
+ * - std::tuple -> JSON array (positional)
+ * - std::variant -> JSON object {"i": index, "v": value}
+ *
+ * @tparam C The codec to use for encoding/decoding
+ * @tparam Backend A type satisfying the JsonBackend concept
+ */
+template<typename C, typename Backend>
+struct json_format {
+    static_assert(Codec<C>, "C must satisfy the Codec concept");
+    static_assert(JsonBackend<Backend>, "Backend must satisfy the JsonBackend concept");
+
+    using value_type = typename std::decay_t<C>::value_type;
+    using json_type = typename Backend::value_type;
+
+    C codec;
+
+    constexpr explicit json_format(const C& c) : codec{c} {}
+
+    template<typename C2, typename B2>
+    friend struct json_format;
+
+    /**
+     * @brief Serializes a value to a JSON DOM node
+     * @param value The value to serialize
+     * @return A JSON DOM node representing the serialized value
+     */
+    json_type serialize(auto&& value) const
+        requires requires { codec.encode(std::forward<decltype(value)>(value)); }
+    {
+        using val_t = std::decay_t<value_type>;
+
+        // Fundamental types (handles varints natively)
+        if constexpr (std::same_as<val_t, std::monostate>) {
+            return Backend::make_null();
+        } else if constexpr (std::same_as<val_t, bool>) {
+            return Backend::make_bool(static_cast<bool>(value));
+        } else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
+            return Backend::make_int(static_cast<std::int64_t>(value));
+        } else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
+            return Backend::make_uint(static_cast<std::uint64_t>(value));
+        } else if constexpr (std::is_floating_point_v<val_t>) {
+            return Backend::make_float(static_cast<double>(value));
+        }
+        // String types
+        else if constexpr (json_detail::is_std_string_v<val_t>) {
+            return Backend::make_string(std::string(value.begin(), value.end()));
+        }
+        // Optional-like (std::optional) -> null or inner
+        else if constexpr (json_detail::is_optional_like_v<val_t> &&
+                           json_detail::HasValueCodec<C>) {
+            if (!value.has_value()) return Backend::make_null();
+            auto inner_codec = json_detail::get_value_codec(codec);
+            auto inner_fmt = json_format<decltype(inner_codec), Backend>(inner_codec);
+            return inner_fmt.serialize(*std::forward<decltype(value)>(value));
+        }
+        // Container of string-keyed pairs -> JSON object
+        else if constexpr (json_detail::StringKeyedPairContainer<val_t> &&
+                           json_detail::HasElementCodec<C>) {
+            auto elem_codec = json_detail::get_element_codec(codec);
+            auto val_codec = std::get<1>(elem_codec.codec.codecs);
+            auto val_fmt = json_format<decltype(val_codec), Backend>(val_codec);
+            auto obj = Backend::make_object();
+            for (const auto& [k, v] : value) {
+                Backend::object_set(obj, std::string(k), val_fmt.serialize(v));
+            }
+            return obj;
+        }
+        // Container -> JSON array
+        else if constexpr (json_detail::NonMapContainer<val_t> &&
+                           json_detail::HasElementCodec<C>) {
+            auto elem_codec = json_detail::get_element_codec(codec);
+            auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
+            auto arr = Backend::make_array();
+            for (auto&& elem : value) {
+                Backend::array_push_back(arr, elem_fmt.serialize(
+                    std::forward<decltype(elem)>(elem)));
+            }
+            return arr;
+        }
+        // Fall through to codec chain
+        else {
+            using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+            auto encoded_value = codec.encode(std::forward<decltype(value)>(value));
+            if constexpr (requires { serialize_leaf(std::move(encoded_value)); }) {
+                return serialize_leaf(std::move(encoded_value));
+            } else {
+                auto next_fmt = json_format<next_codec_type, Backend>(codec.next_codec());
+                return next_fmt.serialize(std::move(encoded_value));
+            }
+        }
+    }
+
+    /**
+     * @brief Deserializes a JSON DOM node to a value
+     * @param node The JSON DOM node to deserialize
+     * @return Optional containing the deserialized value, or nullopt on failure
+     */
+    std::optional<value_type> deserialize(const json_type& node) const {
+        using val_t = std::decay_t<value_type>;
+
+        // Fundamental types
+        if constexpr (std::same_as<val_t, std::monostate>) {
+            return std::monostate{};
+        } else if constexpr (std::same_as<val_t, bool>) {
+            if (!Backend::is_bool(node)) return std::nullopt;
+            return static_cast<val_t>(Backend::as_bool(node));
+        } else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
+            if (!Backend::is_integer(node)) return std::nullopt;
+            return static_cast<val_t>(Backend::as_int64(node));
+        } else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
+            if (!Backend::is_integer(node) && !Backend::is_floating(node)) return std::nullopt;
+            return static_cast<val_t>(Backend::as_uint64(node));
+        } else if constexpr (std::is_floating_point_v<val_t>) {
+            if (!Backend::is_floating(node) && !Backend::is_integer(node)) return std::nullopt;
+            return static_cast<val_t>(Backend::as_double(node));
+        }
+        // String types
+        else if constexpr (json_detail::is_std_string_v<val_t>) {
+            if (!Backend::is_string(node)) return std::nullopt;
+            auto s = Backend::as_string(node);
+            return val_t(s.begin(), s.end());
+        }
+        // Optional-like -> null or inner
+        else if constexpr (json_detail::is_optional_like_v<val_t> &&
+                           json_detail::HasValueCodec<C>) {
+            if (Backend::is_null(node)) return value_type{std::nullopt};
+            auto inner_codec = json_detail::get_value_codec(codec);
+            auto inner_fmt = json_format<decltype(inner_codec), Backend>(inner_codec);
+            auto inner = inner_fmt.deserialize(node);
+            if (inner) return value_type{std::move(*inner)};
+            return std::nullopt;
+        }
+        // Container of string-keyed pairs -> from JSON object
+        else if constexpr (json_detail::StringKeyedPairContainer<val_t> &&
+                           json_detail::HasElementCodec<C>) {
+            if (!Backend::is_object(node)) return std::nullopt;
+            auto elem_codec = json_detail::get_element_codec(codec);
+            auto val_codec = std::get<1>(elem_codec.codec.codecs);
+            auto val_fmt = json_format<decltype(val_codec), Backend>(val_codec);
+            value_type result;
+            auto keys = Backend::object_keys(node);
+            for (const auto& key : keys) {
+                auto val = val_fmt.deserialize(Backend::object_get(node, key));
+                if (val) {
+                    result.emplace(key, std::move(*val));
+                }
+            }
+            return result;
+        }
+        // Container -> from JSON array
+        else if constexpr (json_detail::NonMapContainer<val_t> &&
+                           json_detail::HasElementCodec<C>) {
+            if (!Backend::is_array(node)) return std::nullopt;
+            auto elem_codec = json_detail::get_element_codec(codec);
+            auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
+            value_type result;
+            if constexpr (requires { result.reserve(std::size_t{}); }) {
+                result.reserve(Backend::array_size(node));
+            }
+            for (std::size_t i = 0; i < Backend::array_size(node); ++i) {
+                auto elem = elem_fmt.deserialize(Backend::array_at(node, i));
+                if (elem) {
+                    if constexpr (requires { result.push_back(std::move(*elem)); }) {
+                        result.push_back(std::move(*elem));
+                    } else if constexpr (requires { result.insert(std::move(*elem)); }) {
+                        result.insert(std::move(*elem));
+                    } else if constexpr (requires { result.insert(result.end(), std::move(*elem)); }) {
+                        result.insert(result.end(), std::move(*elem));
+                    } else if constexpr (requires { result[i] = std::move(*elem); }) {
+                        result[i] = std::move(*elem);
+                    }
+                }
+            }
+            return result;
+        }
+        // Fall through to codec chain
+        else {
+            if constexpr (requires { deserialize_leaf(node); }) {
+                auto leaf = deserialize_leaf(node);
+                if constexpr (std::same_as<decltype(leaf), value_type>) {
+                    return leaf;
+                } else if constexpr (std::same_as<decltype(leaf), std::optional<value_type>>) {
+                    return leaf;
+                } else {
+                    return std::nullopt;
+                }
+            } else {
+                using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+                auto next_codec = codec.next_codec();
+                json_format<next_codec_type, Backend> next_format{next_codec};
+                if (auto encoded = next_format.deserialize(node)) {
+                    return codec.decode(std::move(*encoded));
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+  protected:
+    // Leaf: range_holder of char -> JSON string
+    json_type serialize_leaf(auto&& range_value) const
+        requires(is_range_holder_v<std::decay_t<decltype(range_value)>> &&
+                 is_char_type_v<typename std::decay_t<decltype(range_value)>::value_type> &&
+                 requires { codec.element_codec; })
+    {
+        std::string str;
+        for (auto&& ch : range_value) {
+            auto c = static_cast<char>(ch);
+            if (c == '\0') break;
+            str.push_back(c);
+        }
+        return Backend::make_string(std::move(str));
+    }
+
+    value_type deserialize_leaf(const json_type& node) const
+        requires(json_detail::CharRangeHolder<value_type> &&
+                 requires { codec.element_codec; })
+    {
+        using char_t = typename std::decay_t<value_type>::value_type;
+        if (!Backend::is_string(node)) return value_type{};
+        std::string str = Backend::as_string(node);
+        return value_type([str = std::move(str), idx = std::size_t{0}]() mutable -> std::optional<char_t> {
+            if (idx < str.size()) {
+                return static_cast<char_t>(str[idx++]);
+            } else if (idx == str.size()) {
+                idx++;
+                return char_t{};
+            }
+            return std::nullopt;
+        });
+    }
+
+    // Leaf: range_holder of string-keyed pairs -> JSON object
+    json_type serialize_leaf(auto&& range_value) const
+        requires(is_range_holder_v<std::decay_t<decltype(range_value)>> &&
+                 is_string_keyed_pair_v<typename std::decay_t<decltype(range_value)>::value_type> &&
+                 requires { codec.element_codec; codec.element_codec.codec.codecs; })
+    {
+        auto element_codec = codec.element_codec;
+        auto val_codec = std::get<1>(element_codec.codec.codecs);
+        auto val_fmt = json_format<decltype(val_codec), Backend>(val_codec);
+        auto obj = Backend::make_object();
+        for (auto&& elem : range_value) {
+            Backend::object_set(obj, std::string(elem.first), val_fmt.serialize(elem.second));
+        }
+        return obj;
+    }
+
+    value_type deserialize_leaf(const json_type& node) const
+        requires(json_detail::PairRangeHolder<value_type> &&
+                 requires { codec.element_codec; codec.element_codec.codec.codecs; })
+    {
+        using pair_t = typename std::decay_t<value_type>::value_type;
+        if (!Backend::is_object(node)) return value_type{};
+        auto element_codec = codec.element_codec;
+        auto val_codec = std::get<1>(element_codec.codec.codecs);
+        auto val_fmt = json_format<decltype(val_codec), Backend>(val_codec);
+        auto keys = Backend::object_keys(node);
+        return value_type([keys = std::move(keys), idx = std::size_t{0}, &node, val_fmt]() mutable
+                              -> std::optional<pair_t> {
+            if (idx >= keys.size()) return std::nullopt;
+            const auto& key = keys[idx++];
+            const auto& val_node = Backend::object_get(node, key);
+            auto val_opt = val_fmt.deserialize(val_node);
+            if (!val_opt) return std::nullopt;
+            return pair_t{std::string(key), std::move(*val_opt)};
+        });
+    }
+
+    // Leaf: range_holder (general) -> JSON array
+    json_type serialize_leaf(auto&& range_value) const
+        requires(is_range_holder_v<std::decay_t<decltype(range_value)>> &&
+                 !is_char_type_v<typename std::decay_t<decltype(range_value)>::value_type> &&
+                 !is_string_keyed_pair_v<typename std::decay_t<decltype(range_value)>::value_type> &&
+                 requires { codec.element_codec; } &&
+                 std::same_as<typename std::decay_t<decltype(range_value)>::value_type,
+                              json_detail::element_value_type_or_void_t<C> >)
+    {
+        auto element_codec = codec.element_codec;
+        auto next_element_codec = element_codec.next_codec();
+        auto elem_fmt = json_format<decltype(next_element_codec), Backend>(next_element_codec);
+        auto arr = Backend::make_array();
+        for (auto&& elem : range_value) {
+            auto encoded_elem = element_codec.encode(std::forward<decltype(elem)>(elem));
+            Backend::array_push_back(arr, elem_fmt.serialize(std::move(encoded_elem)));
+        }
+        return arr;
+    }
+
+    value_type deserialize_leaf(const json_type& node) const
+        requires(json_detail::GeneralRangeHolder<value_type> &&
+                 requires { codec.element_codec; } &&
+                 std::same_as<typename std::decay_t<value_type>::value_type,
+                              json_detail::element_value_type_or_void_t<C> >)
+    {
+        using elem_t = typename std::decay_t<value_type>::value_type;
+        if (!Backend::is_array(node)) return value_type{};
+        auto element_codec = codec.element_codec;
+        auto next_element_codec = element_codec.next_codec();
+        auto elem_fmt = json_format<decltype(next_element_codec), Backend>(next_element_codec);
+        std::size_t size = Backend::array_size(node);
+        return value_type([&node, elem_fmt, element_codec, size, idx = std::size_t{0}]() mutable -> std::optional<elem_t> {
+            if (idx >= size) return std::nullopt;
+            const auto& elem_node = Backend::array_at(node, idx++);
+            auto encoded_opt = elem_fmt.deserialize(elem_node);
+            if (!encoded_opt) return std::nullopt;
+            return element_codec.decode(std::move(*encoded_opt));
+        });
+    }
+
+    // Leaf: tuple -> JSON array or object (when named)
+    json_type serialize_leaf(auto&& tuple_value) const
+        requires(is_tuple_v<std::decay_t<decltype(tuple_value)>> &&
+                 requires { codec.next_codec().encode(std::forward<decltype(tuple_value)>(tuple_value)); })
+    {
+        using codecs_tuple_t = std::decay_t<decltype(codec.next_codec().codecs)>;
+        if constexpr (all_named_v<codecs_tuple_t>) {
+            assert(!has_duplicate_names(codec.next_codec().codecs) &&
+                   "json_format: duplicate member names detected in all-named tuple");
+            return serialize_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value),
+                                               std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
+        } else if constexpr (any_named_v<codecs_tuple_t>) {
+            assert(!has_duplicate_names(codec.next_codec().codecs) &&
+                   "json_format: duplicate member names detected in mixed-named tuple");
+            return serialize_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value),
+                                              std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
+        } else {
+            return serialize_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value),
+                                        std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
+        }
+    }
+
+    std::optional<value_type> deserialize_leaf(const json_type& node) const
+        requires(is_tuple_v<std::decay_t<value_type>>)
+    {
+        // In the deserialization path, codec is the tuple_codec itself,
+        // so names live in codec.codecs (not codec.next_codec().codecs)
+        using codecs_tuple_t = std::decay_t<decltype(codec.codecs)>;
+        if constexpr (all_named_v<codecs_tuple_t>) {
+            if (!Backend::is_object(node)) return std::nullopt;
+            return deserialize_named_object_impl(node, std::make_index_sequence<std::tuple_size_v<value_type>>{});
+        } else if constexpr (any_named_v<codecs_tuple_t>) {
+            if (!Backend::is_array(node)) return std::nullopt;
+            return deserialize_mixed_tuple_impl(node, std::make_index_sequence<std::tuple_size_v<value_type>>{});
+        } else {
+            if (!Backend::is_array(node)) return std::nullopt;
+            return deserialize_tuple_impl(node, std::make_index_sequence<std::tuple_size_v<value_type>>{});
+        }
+    }
+
+    // Leaf: variant -> JSON object {"i": index, "v": value}
+    json_type serialize_leaf(auto&& variant_value) const
+        requires(is_variant_v<std::decay_t<decltype(variant_value)>> &&
+                 requires { codec.next_codec().encode(std::forward<decltype(variant_value)>(variant_value)); })
+    {
+        auto obj = Backend::make_object();
+        Backend::object_set(obj, "i", Backend::make_uint(static_cast<std::uint64_t>(variant_value.index())));
+        auto val_json = serialize_variant_impl(
+            std::forward<decltype(variant_value)>(variant_value),
+            std::make_index_sequence<std::variant_size_v<std::decay_t<decltype(variant_value)>>>{});
+        Backend::object_set(obj, "v", std::move(val_json));
+        return obj;
+    }
+
+    std::optional<value_type> deserialize_leaf(const json_type& node) const
+        requires(is_variant_v<std::decay_t<value_type>> && requires { codec.next_codec(); })
+    {
+        if (!Backend::is_object(node)) return std::nullopt;
+        if (!Backend::object_has_key(node, "i") || !Backend::object_has_key(node, "v")) return std::nullopt;
+        auto idx = static_cast<std::size_t>(Backend::as_uint64(Backend::object_get(node, "i")));
+        if (idx >= std::variant_size_v<value_type>) return std::nullopt;
+        return deserialize_variant_impl(node, idx,
+                                        std::make_index_sequence<std::variant_size_v<value_type>>{});
+    }
+
+  private:
+    // Tuple helpers
+    template<typename TupleValue, std::size_t... Is>
+    json_type serialize_tuple_impl(TupleValue&& tuple_value, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        auto arr = Backend::make_array();
+        (serialize_tuple_element<Is>(arr, std::get<Is>(std::forward<TupleValue>(tuple_value)),
+                                     std::get<Is>(next_codec.codecs)),
+         ...);
+        return arr;
+    }
+
+    template<std::size_t I, typename ElemValue, typename ElemCodec>
+    void serialize_tuple_element(json_type& arr, ElemValue&& elem_value, const ElemCodec& elem_codec) const {
+        auto elem_fmt = json_format<ElemCodec, Backend>(elem_codec);
+        Backend::array_push_back(arr, elem_fmt.serialize(std::forward<ElemValue>(elem_value)));
+    }
+
+    template<std::size_t... Is>
+    std::optional<value_type> deserialize_tuple_impl(const json_type& node, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        if (Backend::array_size(node) < sizeof...(Is)) return std::nullopt;
+        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(next_codec.codecs)>::value_type>...>
+            elements{deserialize_tuple_element(node, Is, std::get<Is>(next_codec.codecs))...};
+        if ((std::get<Is>(elements).has_value() && ...)) {
+            auto encoded_tuple = std::make_tuple(std::move(*std::get<Is>(elements))...);
+            return std::optional<value_type>{codec.decode(std::move(encoded_tuple))};
+        }
+        return std::nullopt;
+    }
+
+    template<typename ElemCodec>
+    auto deserialize_tuple_element(const json_type& node, std::size_t index, const ElemCodec& elem_codec) const {
+        auto elem_fmt = json_format<ElemCodec, Backend>(elem_codec);
+        return elem_fmt.deserialize(Backend::array_at(node, index));
+    }
+
+    // Named object helpers (all members named -> JSON object)
+    template<typename TupleValue, std::size_t... Is>
+    json_type serialize_named_object_impl(TupleValue&& tuple_value, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        auto obj = Backend::make_object();
+        (serialize_named_object_element<Is>(obj, std::get<Is>(std::forward<TupleValue>(tuple_value)),
+                                            std::get<Is>(next_codec.codecs)),
+         ...);
+        return obj;
+    }
+
+    template<std::size_t I, typename ElemValue, typename ElemCodec>
+    void serialize_named_object_element(json_type& obj, ElemValue&& elem_value, const ElemCodec& elem_codec) const {
+        auto elem_fmt = json_format<ElemCodec, Backend>(elem_codec);
+        Backend::object_set(obj, std::string(elem_codec.member_name),
+                            elem_fmt.serialize(std::forward<ElemValue>(elem_value)));
+    }
+
+    template<std::size_t... Is>
+    std::optional<value_type> deserialize_named_object_impl(const json_type& node, std::index_sequence<Is...>) const {
+        // Use codec.codecs (named_member_codec level) for deserialization,
+        // matching the serialization path which also uses named_member_codecs.
+        // This ensures optional/vector/etc. detection works symmetrically.
+        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(codec.codecs)>::value_type>...>
+            elements{deserialize_named_object_element<Is>(node)...};
+        if ((std::get<Is>(elements).has_value() && ...)) {
+            // Values are already at the value-type level (not transport level),
+            // so construct the result tuple directly without codec.decode()
+            return std::optional<value_type>{value_type(std::move(*std::get<Is>(elements))...)};
+        }
+        return std::nullopt;
+    }
+
+    template<std::size_t I>
+    auto deserialize_named_object_element(const json_type& node) const {
+        // Use the named_member_codec (same level as serialization)
+        auto named_codec = std::get<I>(codec.codecs);
+        std::string key(named_codec.member_name);
+
+        auto elem_fmt = json_format<decltype(named_codec), Backend>(named_codec);
+        using elem_value_t = typename std::decay_t<decltype(named_codec)>::value_type;
+
+        if (!Backend::object_has_key(node, key)) {
+            // Key missing: check if codec (or its field_codec) has a fallback value
+            if constexpr (requires { named_codec.get_fallback(); }) {
+                return std::optional<elem_value_t>{named_codec.get_fallback()};
+            } else if constexpr (requires { named_codec.field_codec.get_fallback(); }) {
+                return std::optional<elem_value_t>{named_codec.field_codec.get_fallback()};
+            } else {
+                return std::optional<elem_value_t>{std::nullopt};
+            }
+        }
+        return elem_fmt.deserialize(Backend::object_get(node, key));
+    }
+
+    // Mixed tuple helpers (some named -> array with sub-objects)
+    template<typename TupleValue, std::size_t... Is>
+    json_type serialize_mixed_tuple_impl(TupleValue&& tuple_value, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        auto arr = Backend::make_array();
+        (serialize_mixed_tuple_element<Is>(arr, std::get<Is>(std::forward<TupleValue>(tuple_value)),
+                                           std::get<Is>(next_codec.codecs)),
+         ...);
+        return arr;
+    }
+
+    template<std::size_t I, typename ElemValue, typename ElemCodec>
+    void serialize_mixed_tuple_element(json_type& arr, ElemValue&& elem_value, const ElemCodec& elem_codec) const {
+        auto elem_fmt = json_format<ElemCodec, Backend>(elem_codec);
+        auto serialized = elem_fmt.serialize(std::forward<ElemValue>(elem_value));
+        if constexpr (has_member_name_v<ElemCodec>) {
+            // Wrap named element as single-key object: {"name": value}
+            auto wrapper = Backend::make_object();
+            Backend::object_set(wrapper, std::string(elem_codec.member_name), std::move(serialized));
+            Backend::array_push_back(arr, std::move(wrapper));
+        } else {
+            Backend::array_push_back(arr, std::move(serialized));
+        }
+    }
+
+    template<std::size_t I>
+    void collect_member_name(std::vector<std::string>& names) const {
+        using elem_codec_t = std::tuple_element_t<I, std::decay_t<decltype(codec.codecs)>>;
+        if constexpr (has_member_name_v<elem_codec_t>) {
+            names.emplace_back(std::get<I>(codec.codecs).member_name);
+        }
+    }
+
+    template<std::size_t... Is>
+    std::optional<value_type> deserialize_mixed_tuple_impl(const json_type& node, std::index_sequence<Is...>) const {
+        std::size_t arr_size = Backend::array_size(node);
+
+        // Collect all expected named keys from codec.codecs
+        // Then partition array elements: single-key objects matching a named member
+        // are extracted as named; everything else is positional.
+        std::vector<std::pair<std::string, json_type>> named_nodes;
+        std::vector<json_type> positional_nodes;
+
+        // Build the set of expected named keys
+        std::vector<std::string> expected_names;
+        (collect_member_name<Is>(expected_names), ...);
+
+        for (std::size_t i = 0; i < arr_size; ++i) {
+            auto elem_node = Backend::array_at(node, i);
+            if (Backend::is_object(elem_node)) {
+                auto keys = Backend::object_keys(elem_node);
+                if (keys.size() == 1) {
+                    // Check if this single key matches an expected named member
+                    bool is_named = false;
+                    for (const auto& name : expected_names) {
+                        if (keys[0] == name) { is_named = true; break; }
+                    }
+                    if (is_named) {
+                        named_nodes.emplace_back(keys[0], Backend::object_get(elem_node, keys[0]));
+                        continue;
+                    }
+                }
+            }
+            positional_nodes.push_back(std::move(elem_node));
+        }
+
+        std::size_t pos_idx = 0;
+        // Use codec.codecs (named_member_codec / member_codec level) for deserialization,
+        // matching the serialization path
+        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(codec.codecs)>::value_type>...>
+            elements{deserialize_mixed_element<Is>(named_nodes, positional_nodes, pos_idx)...};
+        if ((std::get<Is>(elements).has_value() && ...)) {
+            return std::optional<value_type>{value_type(std::move(*std::get<Is>(elements))...)};
+        }
+        return std::nullopt;
+    }
+
+    template<std::size_t I>
+    auto deserialize_mixed_element(const std::vector<std::pair<std::string, json_type>>& named_nodes,
+                                   const std::vector<json_type>& positional_nodes,
+                                   std::size_t& pos_idx) const {
+        // Use the codec from codec.codecs (same level as serialization)
+        auto elem_codec = std::get<I>(codec.codecs);
+        auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
+        using elem_value_t = typename std::decay_t<decltype(elem_codec)>::value_type;
+
+        if constexpr (has_member_name_v<decltype(elem_codec)>) {
+            // Look up by name
+            std::string key(elem_codec.member_name);
+            for (const auto& [k, v] : named_nodes) {
+                if (k == key) return elem_fmt.deserialize(v);
+            }
+            return std::optional<elem_value_t>{std::nullopt};
+        } else {
+            // Consume next positional node
+            if (pos_idx < positional_nodes.size()) {
+                return elem_fmt.deserialize(positional_nodes[pos_idx++]);
+            }
+            return std::optional<elem_value_t>{std::nullopt};
+        }
+    }
+
+    // Variant helpers
+    template<typename VariantValue, std::size_t... Is>
+    json_type serialize_variant_impl(VariantValue&& variant_value, std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        std::size_t runtime_index = variant_value.index();
+        json_type result = Backend::make_null();
+        (serialize_variant_alternative<Is>(std::forward<VariantValue>(variant_value), next_codec,
+                                           runtime_index, result),
+         ...);
+        return result;
+    }
+
+    template<std::size_t I, typename VariantValue, typename NextCodec>
+    void serialize_variant_alternative(VariantValue&& variant_value, const NextCodec& next_codec,
+                                       std::size_t runtime_index, json_type& result) const {
+        if (I != runtime_index) return;
+        auto elem_codec = std::get<I>(next_codec.codecs);
+        auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
+        result = elem_fmt.serialize(std::get<I>(std::forward<VariantValue>(variant_value)));
+    }
+
+    template<std::size_t... Is>
+    std::optional<value_type> deserialize_variant_impl(const json_type& node, std::size_t active_index,
+                                                        std::index_sequence<Is...>) const {
+        auto next_codec = codec.next_codec();
+        std::optional<value_type> result;
+        (deserialize_variant_alternative<Is>(node, next_codec, active_index, result) || ...);
+        return result;
+    }
+
+    template<std::size_t I, typename NextCodec>
+    bool deserialize_variant_alternative(const json_type& node, const NextCodec& next_codec,
+                                          std::size_t active_index, std::optional<value_type>& result) const {
+        if (I != active_index) return false;
+        auto elem_codec = std::get<I>(next_codec.codecs);
+        auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
+        const auto& val_node = Backend::object_get(node, "v");
+        if (auto elem_opt = elem_fmt.deserialize(val_node)) {
+            using encoded_variant_type = typename std::decay_t<decltype(codec.next_codec())>::value_type;
+            encoded_variant_type encoded_var(std::in_place_index<I>, std::move(*elem_opt));
+            result = codec.decode(std::move(encoded_var));
+        }
+        return true;
+    }
+};
+
+/**
+ * @brief Helper function to create a json_format with explicit backend type.
+ *
+ * @tparam Backend A type satisfying the JsonBackend concept
+ * @param c The codec to use for encoding/decoding
+ * @return A json_format configured with the specified codec and backend
+ */
+template<typename Backend>
+static constexpr auto make_json_format(Codec auto&& c) {
+    return json_format<std::decay_t<decltype(c)>, Backend>(std::forward<decltype(c)>(c));
+}
+
+} // namespace muesli

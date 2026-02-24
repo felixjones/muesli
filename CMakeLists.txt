@@ -104,6 +104,9 @@ if(BUILD_TESTING)
 
     add_muesli_test_exe(test_or_else_codec tests/test_or_else_codec.cpp)
     add_test(NAME test_or_else_codec COMMAND test_or_else_codec)
+
+    add_muesli_test_exe(test_json_format tests/test_json_format.cpp)
+    add_test(NAME test_json_format COMMAND test_json_format)
 endif()
 
 if(BUILD_EXAMPLES)
