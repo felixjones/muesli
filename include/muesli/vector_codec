@@ -10,6 +10,7 @@
 #include <muesli/fluent/constructable>
 #include <muesli/fluent/nullable>
 #include <muesli/fluent/optionable>
+#include <muesli/fluent/or_elseable>
 #include <muesli/fluent/projectable>
 #include <muesli/fluent/transformable>
 #include <muesli/identity_codec>
@@ -57,7 +58,8 @@ struct vector_codec : fluent::optionable<vector_codec<ElementCodec, Allocator>>,
                       fluent::transformable<vector_codec<ElementCodec, Allocator>>,
                       fluent::projectable<vector_codec<ElementCodec, Allocator>>,
                       fluent::constructable<vector_codec<ElementCodec, Allocator>>,
-                      fluent::nullableable<vector_codec<ElementCodec, Allocator>> {
+                      fluent::nullableable<vector_codec<ElementCodec, Allocator>>,
+                      fluent::or_elseable<vector_codec<ElementCodec, Allocator>> {
     using value_type = std::vector<typename ElementCodec::value_type, Allocator>;
 
     ElementCodec element_codec;

@@ -10,6 +10,7 @@
 #include <muesli/fluent/constructable>
 #include <muesli/fluent/nullable>
 #include <muesli/fluent/optionable>
+#include <muesli/fluent/or_elseable>
 #include <muesli/fluent/projectable>
 #include <muesli/fluent/transformable>
 #include <muesli/util/concepts>
@@ -83,7 +84,8 @@ struct transform_codec : fluent::optionable<transform_codec<InnerCodec, EncodeFn
                          fluent::transformable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
                          fluent::projectable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
                          fluent::constructable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
-                         fluent::nullableable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>> {
+                         fluent::nullableable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>>,
+                         fluent::or_elseable<transform_codec<InnerCodec, EncodeFn, DecodeFn, ValueType>> {
     /** @brief Inner value type from the inner codec */
     using inner_value_type = typename InnerCodec::value_type;
     /** @brief Value type after decode transformation */

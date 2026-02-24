@@ -1,0 +1,116 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/fluent/constrainable>
+#include <muesli/fluent/constructable>
+#include <muesli/fluent/nullable>
+#include <muesli/fluent/optionable>
+#include <muesli/fluent/projectable>
+#include <muesli/fluent/transformable>
+#include <muesli/util/concepts>
+
+#include <functional>
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec wrapper providing a fallback value on decode failure.
+ *
+ * Wraps any codec and catches exceptions during decode, substituting a
+ * fallback value produced by a user-supplied function. Serialization
+ * formats (e.g. json_format) also inspect the fallback for missing-key
+ * recovery during named-object deserialization.
+ *
+ * @tparam C The wrapped codec
+ * @tparam FallbackFn Callable returning C::value_type
+ *
+ * Recovery scenarios:
+ * - Constrained codec throws on constraint violation -> fallback
+ * - Named JSON key is missing -> fallback (detected by json_format)
+ * - Any other decode-time exception -> fallback
+ *
+ * @code
+ * // Constrained int with fallback on violation
+ * auto safe_positive = mu::int32_codec
+ *     .constrain([](int v) { return v > 0; })
+ *     .or_else([]{ return 1; });
+ *
+ * // Named member with default for missing JSON key
+ * mu::int32_codec
+ *     .or_else([]{ return 8080; })
+ *     .member<&Config::port>()
+ *     .named("port");
+ * @endcode
+ *
+ * @see fluent::or_elseable - Mixin that adds the .or_else() method
+ */
+template<typename C, typename FallbackFn>
+struct or_else_codec : fluent::optionable<or_else_codec<C, FallbackFn>>,
+                       fluent::constrainable<or_else_codec<C, FallbackFn>>,
+                       fluent::transformable<or_else_codec<C, FallbackFn>>,
+                       fluent::projectable<or_else_codec<C, FallbackFn>>,
+                       fluent::constructable<or_else_codec<C, FallbackFn>>,
+                       fluent::nullableable<or_else_codec<C, FallbackFn>> {
+    /** @brief Value type is inherited from the inner codec */
+    using value_type = typename C::value_type;
+    /** @brief Next codec type is inherited from the inner codec */
+    using next_codec_type = std::decay_t<decltype(std::declval<C>().next_codec())>;
+
+    /** @brief The wrapped codec */
+    C inner;
+    /** @brief Function that produces the fallback value */
+    FallbackFn fallback_fn;
+
+    /** @brief Constructs with an inner codec and fallback function */
+    constexpr or_else_codec(const C& c, FallbackFn fn) noexcept
+        : inner(c), fallback_fn(std::move(fn)) {}
+
+    /** @brief Returns the next codec from the inner codec */
+    constexpr next_codec_type next_codec() const noexcept {
+        return inner.next_codec();
+    }
+
+    /** @brief Encodes using the inner codec (no fallback on encode) */
+    template<typename V>
+    constexpr auto encode(V&& value) const {
+        return inner.encode(std::forward<V>(value));
+    }
+
+    /**
+     * @brief Decodes using the inner codec; returns fallback on exception.
+     *
+     * Catches all exceptions thrown during decode (e.g. constraint
+     * violations) and substitutes the fallback value.
+     */
+    template<typename E>
+    constexpr value_type decode(E&& encoded) const {
+        try {
+            return inner.decode(std::forward<E>(encoded));
+        } catch (...) {
+            return std::invoke(fallback_fn);
+        }
+    }
+
+    /** @brief Projects using the inner codec if it supports projection */
+    template<typename Owner>
+    constexpr auto project(const Owner& obj) const noexcept
+        requires requires(const C& c, const Owner& o) { c.project(o); }
+    {
+        return inner.project(obj);
+    }
+
+    /** @brief Invokes the fallback function to get the fallback value */
+    constexpr value_type get_fallback() const {
+        return std::invoke(fallback_fn);
+    }
+};
+
+} // namespace muesli

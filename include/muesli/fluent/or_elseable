@@ -1,0 +1,133 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <concepts>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+namespace muesli {
+
+/** @brief Forward declaration of or_else_codec */
+template<typename C, typename FallbackFn>
+struct or_else_codec;
+
+namespace detail {
+
+    /** @brief Simple value holder that acts as a nullary callable */
+    template<typename T>
+    struct value_holder {
+        T value;
+
+        constexpr T operator()() const { return value; }
+    };
+
+    /** @brief Holds constructor arguments and constructs T on invocation */
+    template<typename T, typename... Args>
+    struct make_holder {
+        std::tuple<std::decay_t<Args>...> args;
+
+        constexpr T operator()() const {
+            return std::apply([](const auto&... a) -> T { return T(a...); }, args);
+        }
+    };
+
+} // namespace detail
+
+} // namespace muesli
+
+namespace muesli::fluent {
+
+/**
+ * @category Fluent API Mixins
+ * @brief CRTP mixin that adds `.or_else(fn)` to codecs.
+ *
+ * Provides a general recovery mechanism: the returned or_else_codec catches
+ * decode failures (thrown exceptions) and substitutes a fallback value.
+ * Serialization formats may also inspect the fallback for missing-key recovery.
+ *
+ * Works with:
+ * - Failed constraints (constrained_codec throws on violation)
+ * - Missing named-object keys in JSON (json_format detects the fallback)
+ * - Any other decode-time exception
+ *
+ * @tparam Derived The codec type inheriting from this mixin
+ *
+ * @code
+ * // Constrained int with fallback on violation
+ * auto codec = mu::int32_codec
+ *     .constrain([](int v) { return v > 0; })
+ *     .or_else([]{ return 1; });
+ *
+ * // Named member with default for missing JSON key
+ * mu::int32_codec
+ *     .or_else([]{ return 8080; })
+ *     .member<&Config::port>()
+ *     .named("port");
+ * @endcode
+ *
+ * @see or_else_codec
+ */
+template<typename Derived>
+struct or_elseable {
+    /**
+     * @brief Wraps this codec with a fallback.
+     *
+     * Accepts either a nullary callable (supplier) or a plain value.
+     * - Callable: invoked on each fallback to produce the value
+     * - Value: wrapped in a value_holder and returned directly
+     *
+     * @tparam T Callable or value type
+     * @param fallback The fallback supplier or value
+     * @return An or_else_codec wrapping this codec
+     *
+     * @code
+     * auto a = mu::int32_codec.or_else(42);             // value
+     * auto b = mu::int32_codec.or_else([]{ return 42; }); // callable
+     * @endcode
+     */
+    template<typename T>
+    constexpr auto or_else(T fallback) const noexcept {
+        if constexpr (std::invocable<T>) {
+            return muesli::or_else_codec<Derived, std::decay_t<T>>{
+                static_cast<const Derived&>(*this), std::move(fallback)};
+        } else {
+            using holder_t = muesli::detail::value_holder<typename Derived::value_type>;
+            return muesli::or_else_codec<Derived, holder_t>{
+                static_cast<const Derived&>(*this),
+                holder_t{static_cast<typename Derived::value_type>(std::move(fallback))}};
+        }
+    }
+
+    /**
+     * @brief Wraps this codec with a fallback constructed from arguments.
+     *
+     * Captures constructor arguments and forwards them to the value_type
+     * constructor when the fallback is needed. Analogous to emplace-style
+     * construction in STL containers.
+     *
+     * @tparam Args Constructor argument types
+     * @param args Arguments forwarded to value_type's constructor
+     * @return An or_else_codec wrapping this codec
+     *
+     * @code
+     * auto a = mu::string_codec.or_else_make("hello");         // const char*
+     * auto b = mu::string_codec.or_else_make(5, 'x');          // "xxxxx"
+     * @endcode
+     */
+    template<typename... Args>
+    constexpr auto or_else_make(Args&&... args) const noexcept {
+        using value_t = typename Derived::value_type;
+        using holder_t = muesli::detail::make_holder<value_t, Args...>;
+        return muesli::or_else_codec<Derived, holder_t>{
+            static_cast<const Derived&>(*this),
+            holder_t{std::tuple<std::decay_t<Args>...>{std::forward<Args>(args)...}}};
+    }
+};
+
+} // namespace muesli::fluent

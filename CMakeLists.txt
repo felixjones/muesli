@@ -101,6 +101,9 @@ if(BUILD_TESTING)
 
     add_muesli_test_exe(test_fluent_nullable tests/test_fluent_nullable.cpp)
     add_test(NAME test_fluent_nullable COMMAND test_fluent_nullable)
+
+    add_muesli_test_exe(test_or_else_codec tests/test_or_else_codec.cpp)
+    add_test(NAME test_or_else_codec COMMAND test_or_else_codec)
 endif()
 
 if(BUILD_EXAMPLES)

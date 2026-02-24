@@ -29,6 +29,7 @@
 #include <muesli/constrained_codec>
 #include <muesli/delimited_codec>
 #include <muesli/transform_codec>
+#include <muesli/or_else_codec>
 
 // Application codecs
 #include <muesli/apply_codec>

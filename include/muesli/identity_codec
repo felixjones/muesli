@@ -10,6 +10,7 @@
 #include <muesli/fluent/constructable>
 #include <muesli/fluent/nullable>
 #include <muesli/fluent/optionable>
+#include <muesli/fluent/or_elseable>
 #include <muesli/fluent/projectable>
 #include <muesli/fluent/transformable>
 
@@ -45,7 +46,8 @@ struct identity_codec : fluent::optionable<identity_codec<T>>,
                         fluent::projectable<identity_codec<T>>,
                         fluent::transformable<identity_codec<T>>,
                         fluent::nullableable<identity_codec<T>>,
-                        fluent::constructable<identity_codec<T>> {
+                        fluent::constructable<identity_codec<T>>,
+                        fluent::or_elseable<identity_codec<T>> {
     /** @brief The type that this codec encodes and decodes */
     using value_type = T;
 

@@ -10,6 +10,7 @@
 #include <muesli/fluent/constructable>
 #include <muesli/fluent/nullable>
 #include <muesli/fluent/optionable>
+#include <muesli/fluent/or_elseable>
 #include <muesli/fluent/projectable>
 #include <muesli/fluent/transformable>
 #include <muesli/range_codec>
@@ -59,7 +60,8 @@ struct array_codec : fluent::optionable<array_codec<ElementCodec, N>>,
                      fluent::transformable<array_codec<ElementCodec, N>>,
                      fluent::projectable<array_codec<ElementCodec, N>>,
                      fluent::constructable<array_codec<ElementCodec, N>>,
-                     fluent::nullableable<array_codec<ElementCodec, N>> {
+                     fluent::nullableable<array_codec<ElementCodec, N>>,
+                     fluent::or_elseable<array_codec<ElementCodec, N>> {
     /** @brief Value type is a fixed-size array of element values */
     using value_type = std::array<typename ElementCodec::value_type, N>;
     /** @brief The next codec in the chain is a range_codec */

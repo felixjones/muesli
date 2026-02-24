@@ -8,6 +8,7 @@
 
 #include <muesli/constant_codec>
 #include <muesli/fluent/constructable>
+#include <muesli/fluent/or_elseable>
 #include <muesli/fluent/projectable>
 #include <muesli/fluent/transformable>
 #include <muesli/util/concepts>
@@ -59,7 +60,8 @@ struct constrained_codec;
 template<Codec ValueCodec>
 struct optional_codec : fluent::transformable<optional_codec<ValueCodec>>,
                         fluent::projectable<optional_codec<ValueCodec>>,
-                        fluent::constructable<optional_codec<ValueCodec>> {
+                        fluent::constructable<optional_codec<ValueCodec>>,
+                        fluent::or_elseable<optional_codec<ValueCodec>> {
     /** @brief Value type is std::optional of the inner codec's value type */
     using value_type = std::optional<typename ValueCodec::value_type>;
     /** @brief Next codec type is a variant codec (monostate or value) */
