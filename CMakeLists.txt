@@ -149,6 +149,26 @@ if(BUILD_TESTING)
         target_include_directories(test_json_rapidjson SYSTEM PRIVATE ${rapidjson_SOURCE_DIR}/include)
         add_test(NAME test_json_rapidjson COMMAND test_json_rapidjson)
     endif()
+
+    # JsonCpp
+    option(MUESLI_TEST_JSONCPP "Build JsonCpp backend tests" ON)
+    if(MUESLI_TEST_JSONCPP)
+        FetchContent_Declare(jsoncpp
+            GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
+            GIT_TAG        1.9.6
+            GIT_SHALLOW    TRUE
+        )
+        set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+        set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+        set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(jsoncpp)
+
+        add_muesli_test_exe(test_json_jsoncpp tests/test_json_jsoncpp.cpp)
+        target_link_libraries(test_json_jsoncpp PRIVATE jsoncpp_static)
+        add_test(NAME test_json_jsoncpp COMMAND test_json_jsoncpp)
+    endif()
 endif()
 
 if(BUILD_EXAMPLES)

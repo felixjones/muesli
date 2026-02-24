@@ -1,0 +1,82 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/format/json_backend>
+
+#include <json/json.h>
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace muesli {
+
+/**
+ * @brief JsonBackend implementation for JsonCpp
+ *
+ * Adapts JsonCpp (https://github.com/open-source-parsers/jsoncpp) to the
+ * muesli JsonBackend concept. Include this header and use
+ * `make_json_format<jsoncpp_backend>(codec)` to serialize/deserialize
+ * via Json::Value DOM nodes.
+ *
+ * @code
+ * #include <muesli/format/json_format>
+ * #include <muesli/format/jsoncpp_backend>
+ * #include <muesli/codecs>
+ *
+ * auto fmt = muesli::make_json_format<muesli::jsoncpp_backend>(muesli::int32_codec);
+ * Json::Value j = fmt.serialize(42);
+ * Json::StreamWriterBuilder wb;
+ * wb["indentation"] = "";
+ * std::string s = Json::writeString(wb, j); // "42"
+ * @endcode
+ */
+struct jsoncpp_backend {
+    using value_type = Json::Value;
+
+    // Factory
+    static value_type make_null() { return Json::Value(Json::nullValue); }
+    static value_type make_bool(bool b) { return Json::Value(b); }
+    static value_type make_int(std::int64_t i) { return Json::Value(static_cast<Json::Int64>(i)); }
+    static value_type make_uint(std::uint64_t u) { return Json::Value(static_cast<Json::UInt64>(u)); }
+    static value_type make_float(double d) { return Json::Value(d); }
+    static value_type make_string(std::string s) { return Json::Value(std::move(s)); }
+    static value_type make_array() { return Json::Value(Json::arrayValue); }
+    static value_type make_object() { return Json::Value(Json::objectValue); }
+
+    // Array operations
+    static void array_push_back(value_type& arr, const value_type& elem) { arr.append(elem); }
+    static std::size_t array_size(const value_type& arr) { return arr.size(); }
+    static const value_type& array_at(const value_type& arr, std::size_t idx) {
+        return arr[static_cast<Json::ArrayIndex>(idx)];
+    }
+
+    // Object operations
+    static void object_set(value_type& obj, const std::string& key, const value_type& val) { obj[key] = val; }
+    static const value_type& object_get(const value_type& obj, const std::string& key) { return obj[key]; }
+    static bool object_has_key(const value_type& obj, const std::string& key) { return obj.isMember(key); }
+    static std::vector<std::string> object_keys(const value_type& obj) { return obj.getMemberNames(); }
+
+    // Type queries
+    static bool is_null(const value_type& v) { return v.isNull(); }
+    static bool is_bool(const value_type& v) { return v.isBool(); }
+    static bool is_integer(const value_type& v) { return v.isInt64() || v.isUInt64(); }
+    static bool is_floating(const value_type& v) { return v.isDouble() && !v.isInt64() && !v.isUInt64(); }
+    static bool is_string(const value_type& v) { return v.isString(); }
+    static bool is_array(const value_type& v) { return v.isArray(); }
+    static bool is_object(const value_type& v) { return v.isObject(); }
+
+    // Accessors
+    static bool as_bool(const value_type& v) { return v.asBool(); }
+    static std::int64_t as_int64(const value_type& v) { return v.asInt64(); }
+    static std::uint64_t as_uint64(const value_type& v) { return v.asUInt64(); }
+    static double as_double(const value_type& v) { return v.asDouble(); }
+    static std::string as_string(const value_type& v) { return v.asString(); }
+};
+
+} // namespace muesli
