@@ -191,6 +191,20 @@ endif()
 if(BUILD_EXAMPLES)
     add_executable(example_01 examples/example_01.cpp)
     target_link_libraries(example_01 PRIVATE muesli)
+
+    include(FetchContent)
+    if(NOT TARGET nlohmann_json::nlohmann_json)
+        FetchContent_Declare(nlohmann_json
+                GIT_REPOSITORY https://github.com/nlohmann/json.git
+                GIT_TAG        v3.11.3
+                GIT_SHALLOW    TRUE
+        )
+        set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(nlohmann_json)
+    endif()
+
+    add_executable(example_02 examples/example_02.cpp)
+    target_link_libraries(example_02 PRIVATE muesli nlohmann_json::nlohmann_json)
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include)
