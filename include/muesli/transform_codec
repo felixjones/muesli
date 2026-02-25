@@ -88,10 +88,10 @@ struct transform_codec : fluent::optionable<transform_codec<InnerCodec, EncodeFn
     using inner_value_type = typename InnerCodec::value_type;
     /** @brief Value type after decode transformation */
     using value_type = ValueType;
-    /** @brief Next codec type in the encoding chain */
-    using next_codec_type = std::decay_t<decltype(std::declval<InnerCodec>().next_codec())>;
-    /** @brief Encoded type from the next codec */
-    using encoded_type = typename next_codec_type::value_type;
+    /** @brief Next codec type is the inner codec itself */
+    using next_codec_type = InnerCodec;
+    /** @brief Encoded type is the inner codec's value type */
+    using encoded_type = inner_value_type;
 
     /** @brief Inner codec used after transformation */
     InnerCodec inner;
@@ -104,9 +104,9 @@ struct transform_codec : fluent::optionable<transform_codec<InnerCodec, EncodeFn
     constexpr transform_codec(const InnerCodec& c, EncodeFn enc, DecodeFn dec)
         : inner(c), encode_fn(std::move(enc)), decode_fn(std::move(dec)) {}
 
-    /** @brief Returns the next codec from the inner codec */
+    /** @brief Returns the inner codec as the next step in the chain */
     constexpr next_codec_type next_codec() const noexcept {
-        return inner.next_codec();
+        return inner;
     }
 
     /** @brief Projects a value from owner and applies decode transformation */
@@ -118,18 +118,16 @@ struct transform_codec : fluent::optionable<transform_codec<InnerCodec, EncodeFn
         return std::invoke(decode_fn, std::move(projected));
     }
 
-    /** @brief Applies encode transformation then encodes with inner codec */
+    /** @brief Applies encode transformation to produce the inner codec's value type */
     template<typename V>
     constexpr encoded_type encode(V&& value) const {
-        auto&& mapped = std::invoke(encode_fn, std::forward<V>(value));
-        return inner.encode(std::move(mapped));
+        return std::invoke(encode_fn, std::forward<V>(value));
     }
 
-    /** @brief Decodes with inner codec then applies decode transformation */
+    /** @brief Applies decode transformation from the inner codec's value type */
     template<typename E>
     constexpr value_type decode(E&& encoded) const {
-        auto inner_decoded = inner.decode(std::forward<E>(encoded));
-        return std::invoke(decode_fn, std::move(inner_decoded));
+        return std::invoke(decode_fn, std::forward<E>(encoded));
     }
 };
 

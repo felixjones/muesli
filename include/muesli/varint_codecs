@@ -31,9 +31,10 @@ namespace muesli {
  * ```
  */
 inline constexpr auto unsigned_varint_codec = transform_codec(
-    delimited_codec(uint8_codec,
-                    [](std::uint8_t b) { return (b & 0x80) == 0; } // Predicate: top bit clear = not continuation
-                    ),
+    delimited_codec(
+        uint8_codec,
+        [](std::uint8_t b) { return (b & 0x80) == 0; } // Predicate: top bit clear = not continuation
+    ),
     // Encode: uintmax_t -> range_holder<uint8_t>
     [](std::uintmax_t value) {
         return range_holder<std::uint8_t>([value, done = false]() mutable -> std::optional<std::uint8_t> {
