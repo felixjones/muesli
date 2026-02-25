@@ -120,20 +120,32 @@ struct delimited_codec : fluent::optionable<delimited_codec<ElementCodec, Delimi
     /** @brief Internal state for decoding delimited ranges */
     struct decode_state {
         encoded_type enc;
-        decltype(enc.begin()) it;
-        decltype(enc.end()) end;
+        typename encoded_type::iterator it{};
+        typename encoded_type::iterator end{};
         ElementCodec codec;
         DelimiterPredicate predicate;
         bool is_initialized = false;
         bool has_found_delimiter = false;
+
+        template<typename Enc>
+        decode_state(Enc&& e, ElementCodec c, DelimiterPredicate p)
+            : enc(std::forward<Enc>(e)), codec(c), predicate(p) {}
+
+        decode_state(decode_state&&) = default;
+        decode_state& operator=(decode_state&&) = default;
     };
+
+    // decode - const lvalue reference overload (for const references from tuple)
+    constexpr value_type decode(const encoded_type& encoded) const {
+        return decode(std::move(const_cast<encoded_type&>(encoded)));
+    }
 
     template<typename E>
     constexpr value_type decode(E&& encoded) const {
         // Construct decode_state by moving the incoming range_holder (or encoded value)
-        auto state = decode_state{std::forward<E>(encoded), {}, {}, element_codec, delimiter_predicate, false, false};
+        auto ds = decode_state(std::forward<E>(encoded), element_codec, delimiter_predicate);
         // The rest of the logic operates on state without copying the underlying range
-        return value_type([state = std::move(state)]() mutable -> std::optional<element_value_type> {
+        return value_type([state = std::move(ds)]() mutable -> std::optional<element_value_type> {
             if (!state.is_initialized) {
                 state.it = state.enc.begin();
                 state.end = state.enc.end();

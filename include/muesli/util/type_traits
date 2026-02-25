@@ -12,11 +12,98 @@
 #include <concepts>
 #include <cstddef>
 #include <optional>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <variant>
 
 namespace muesli {
+
+// -- Named member detection traits ----------------------------------------
+
+/** @brief Trait to detect if a codec has a member_name data member */
+template<typename T, typename = void>
+struct has_member_name : std::false_type {};
+
+template<typename T>
+struct has_member_name<T, std::void_t<decltype(std::declval<const T&>().member_name)>> : std::true_type {};
+
+/** @brief Value template to detect if a codec has a member_name */
+template<typename T>
+inline constexpr bool has_member_name_v = has_member_name<T>::value;
+
+namespace named_detail {
+
+    /** @brief Check if all types in a tuple have member_name */
+    template<typename Tuple>
+    struct all_named_in_tuple;
+
+    template<typename... Ts>
+    struct all_named_in_tuple<std::tuple<Ts...>> : std::bool_constant<(has_member_name_v<Ts> && ...)> {};
+
+    /** @brief Check if any type in a tuple has member_name */
+    template<typename Tuple>
+    struct any_named_in_tuple;
+
+    template<typename... Ts>
+    struct any_named_in_tuple<std::tuple<Ts...>> : std::bool_constant<(has_member_name_v<Ts> || ...)> {};
+
+    /** @brief Helper to get a codec's member_name or empty string_view */
+    template<typename T>
+    constexpr std::string_view get_name_or_empty(const T& codec) {
+        if constexpr (has_member_name_v<T>) {
+            return codec.member_name;
+        } else {
+            return {};
+        }
+    }
+
+    /** @brief Duplicate name detection on a tuple of codec instances */
+    template<typename... Ts, std::size_t... Is>
+    constexpr bool check_duplicate_names_impl(const std::tuple<Ts...>& codecs, std::index_sequence<Is...>) {
+        const std::string_view names[] = { get_name_or_empty(std::get<Is>(codecs))... };
+        constexpr std::size_t N = sizeof...(Ts);
+        for (std::size_t i = 0; i < N; ++i) {
+            if (names[i].empty()) continue;
+            for (std::size_t j = i + 1; j < N; ++j) {
+                if (names[i] == names[j]) return true;
+            }
+        }
+        return false;
+    }
+
+} // namespace named_detail
+
+/** @brief True if all codecs in a tuple type have member_name */
+template<typename Tuple>
+inline constexpr bool all_named_v = named_detail::all_named_in_tuple<Tuple>::value;
+
+/** @brief True if any codec in a tuple type has member_name */
+template<typename Tuple>
+inline constexpr bool any_named_v = named_detail::any_named_in_tuple<Tuple>::value;
+
+/** @brief True if no codecs in a tuple type have member_name */
+template<typename Tuple>
+inline constexpr bool none_named_v = !named_detail::any_named_in_tuple<Tuple>::value;
+
+/**
+ * @brief Checks whether a tuple of codecs contains duplicate member names
+ *
+ * Works on codec tuple instances. Since codecs are typically declared as
+ * `static constexpr`, this is effectively evaluated at compile time.
+ *
+ * @code
+ * static_assert(!muesli::has_duplicate_names(person::codec.arg_codec.codecs));
+ * @endcode
+ */
+template<typename... Ts>
+constexpr bool has_duplicate_names(const std::tuple<Ts...>& codecs) {
+    if constexpr (sizeof...(Ts) <= 1) {
+        return false;
+    } else {
+        return named_detail::check_duplicate_names_impl(codecs, std::index_sequence_for<Ts...>{});
+    }
+}
 
 /** @brief Forward declaration of range_holder utility type */
 template<typename T>

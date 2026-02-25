@@ -36,7 +36,6 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_identity_codec tests/test_identity_codec.cpp)
     add_test(NAME test_identity_codec COMMAND test_identity_codec)
 
-    # Register apply_codec test explicitly and link against muesli
     add_muesli_test_exe(test_apply_codec tests/test_apply_codec.cpp)
     add_test(NAME test_apply_codec COMMAND test_apply_codec)
 

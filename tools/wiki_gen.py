@@ -932,7 +932,7 @@ def render_declaration(decl: CppDecl) -> List[str]:
     if decl.member_constants:
         lines.append("### Member Constants\n\n")
         for mc in decl.member_constants:
-            lines.append(f"**`{mc.name}`** — `{mc.type_str}`\n\n")
+            lines.append(f"**`{mc.name}`** -- `{mc.type_str}`\n\n")
             if mc.value:
                 lines.append(f"```cpp\nstatic constexpr {mc.type_str} {mc.name} = {mc.value};\n```\n\n")
             if mc.doxy and mc.doxy.brief:
@@ -985,7 +985,7 @@ def render_declaration(decl: CppDecl) -> List[str]:
                         lines.append("**Parameters:**\n\n")
                         params_added = True
                     for param_name, param_desc in func.doxy.member_params.items():
-                        lines.append(f"- `{param_name}` — {param_desc}\n")
+                        lines.append(f"- `{param_name}` -- {param_desc}\n")
 
             if params_added:
                 lines.append("\n")
@@ -1021,7 +1021,7 @@ def render_declaration(decl: CppDecl) -> List[str]:
         if decl.doxy and decl.doxy.member_params:
             lines.append("### Parameters\n\n")
             for param_name, param_desc in decl.doxy.member_params.items():
-                lines.append(f"- `{param_name}` — {param_desc}\n")
+                lines.append(f"- `{param_name}` -- {param_desc}\n")
             lines.append("\n")
 
         # Returns
@@ -1138,7 +1138,7 @@ def render_convenience_header_page(info: Dict) -> str:
 
     for header_name, header_desc in info['includes']:
         page_name = f"API-muesli-{header_name}"
-        lines.append(f"- [`{header_name}`]({page_name}) — {header_desc}\n")
+        lines.append(f"- [`{header_name}`]({page_name}) -- {header_desc}\n")
 
     lines.append("\n")
     return ''.join(lines)
@@ -1187,7 +1187,7 @@ def render_index(files: Dict[str, List[CppDecl]]) -> str:
         seen.add(decl.name)
         brief = _first_sentence(decl.doxy.brief if decl.doxy else "")
         brief = add_cppreference_links(brief) if brief else ""
-        desc = f" — {brief}" if brief else ""
+        desc = f" -- {brief}" if brief else ""
         lines_list.append(f"- [`{decl.name}`]({page_name}#{decl.name}){desc}\n")
 
     seen_types = set()

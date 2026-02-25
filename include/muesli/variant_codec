@@ -67,7 +67,7 @@ namespace muesli {
  * using StateValue = std::variant<std::monostate, int32_t, std::string>;
  * @endcode
  *
- * @note Discriminant is encoded as uint8_t, limiting variants to ≤256 alternatives
+ * @note Discriminant is encoded as uint8_t, limiting variants to <=256 alternatives
  * @note Index 0 is always the first alternative
  * @see optional_codec - For binary presence/absence
  * @see nullable_codec - For pointer-like presence/absence

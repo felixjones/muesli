@@ -103,7 +103,7 @@ def main():
         print(f'\nYear constraints: {2026} <= year <= {CURRENT_YEAR}')
         print('For year ranges: START_YEAR <= END_YEAR')
         return 1
-    print(f'✓ All {len(headers)} headers have valid license headers.')
+    print(f'[ok] All {len(headers)} headers have valid license headers.')
     return 0
 
 if __name__ == '__main__':
