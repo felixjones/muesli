@@ -25,6 +25,13 @@ namespace test {
 struct json_value {
     enum class kind { null_k, bool_k, int_k, uint_k, float_k, string_k, array_k, object_k };
 
+    json_value();
+    json_value(const json_value&);
+    json_value(json_value&&) noexcept;
+    json_value& operator=(const json_value&);
+    json_value& operator=(json_value&&) noexcept;
+    ~json_value();
+
     kind type = kind::null_k;
     bool bool_val = false;
     std::int64_t int_val = 0;
@@ -34,6 +41,13 @@ struct json_value {
     std::vector<json_value> array_val;
     std::vector<std::pair<std::string, json_value>> object_val;
 };
+
+inline json_value::json_value() = default;
+inline json_value::json_value(const json_value&) = default;
+inline json_value::json_value(json_value&&) noexcept = default;
+inline json_value& json_value::operator=(const json_value&) = default;
+inline json_value& json_value::operator=(json_value&&) noexcept = default;
+inline json_value::~json_value() = default;
 
 struct test_backend {
     using value_type = json_value;
