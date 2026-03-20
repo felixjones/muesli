@@ -22,6 +22,7 @@ if(BUILD_TESTING)
     macro(add_muesli_test_exe target source)
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE muesli)
+        list(APPEND MUESLI_TEST_TARGETS ${target})
     endmacro()
 
     add_muesli_test_exe(test_fundamental_codecs tests/test_fundamental_codecs.cpp)
@@ -139,8 +140,7 @@ if(BUILD_TESTING)
     if(MUESLI_TEST_RAPIDJSON)
         FetchContent_Declare(rapidjson
             GIT_REPOSITORY https://github.com/Tencent/rapidjson.git
-            GIT_TAG        v1.1.0
-            GIT_SHALLOW    TRUE
+            GIT_TAG        24b5e7a8b27f42fa16b96fc70aade9106cf7102f
             SOURCE_SUBDIR  _do_not_build
         )
         FetchContent_MakeAvailable(rapidjson)
@@ -185,6 +185,13 @@ if(BUILD_TESTING)
         add_muesli_test_exe(test_json_boost tests/test_json_boost.cpp)
         target_link_libraries(test_json_boost PRIVATE Boost::json)
         add_test(NAME test_json_boost COMMAND test_json_boost)
+    endif()
+
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32 AND MUESLI_TEST_TARGETS)
+        get_filename_component(MUESLI_CLANG_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_tests_properties(${MUESLI_TEST_TARGETS} PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${MUESLI_CLANG_RUNTIME_DIR}"
+        )
     endif()
 endif()
 
