@@ -65,7 +65,7 @@ struct delimited_codec : fluent::optionable<delimited_codec<ElementCodec, Delimi
 
     /** @brief Returns the next codec in the encoding chain */
     constexpr auto next_codec() const noexcept {
-        return range_codec(element_codec.next_codec());
+        return range_codec(element_codec);
     }
 
     /** @brief Encodes a range of values, stopping at delimiter elements */
