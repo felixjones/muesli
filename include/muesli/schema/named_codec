@@ -1,0 +1,90 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+namespace muesli::schema {
+
+/**
+ * @brief Lightweight named identity wrapper for any codec
+ *
+ * Carries a `member_name` string_view so that `all_named_v` detection
+ * recognises it, enabling json_format to emit JSON objects with named keys.
+ * Unlike `named_member_codec`, this requires no member pointer.
+ *
+ * Encode/decode are identity operations (pass-through). The inner codec is
+ * stored only to forward `value_codec` and `element_codec` so that
+ * json_format's native optional/container detection works correctly.
+ *
+ * @tparam InnerCodec The wrapped codec type (used for value_type and codec forwarding)
+ *
+ * @code
+ * auto nc = named_codec<identity_codec<int>>{int_codec, "age"};
+ * // nc.member_name == "age"
+ * // nc.encode(42) == 42
+ * @endcode
+ *
+ * @see make_codec
+ */
+template<muesli::Codec InnerCodec>
+struct named_codec {
+    /** @brief The name used as JSON key for this field */
+    std::string_view member_name;
+
+    /** @brief The value type is inherited from the inner codec */
+    using value_type = typename InnerCodec::value_type;
+
+    /** @brief The inner codec (for value_codec/element_codec forwarding only) */
+    InnerCodec inner_codec;
+
+    /** @brief Constructs a named_codec wrapping the given codec with a name */
+    constexpr named_codec(const InnerCodec& codec, std::string_view name) noexcept
+        : member_name(name), inner_codec(codec) {}
+
+    /** @brief Returns the inner codec as the next in the chain (named wrapper is transparent) */
+    constexpr auto next_codec() const noexcept {
+        return inner_codec;
+    }
+
+    /** @brief Returns the value unchanged (rvalue overload) */
+    static constexpr value_type&& encode(value_type&& value) noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    /** @brief Returns the value unchanged (const lvalue overload) */
+    static constexpr const value_type& encode(const value_type& value) noexcept {
+        return value;
+    }
+
+    /** @brief Returns the value unchanged (rvalue overload) */
+    static constexpr value_type&& decode(value_type&& value) noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    /** @brief Returns the value unchanged (const lvalue overload) */
+    static constexpr const value_type& decode(const value_type& value) noexcept {
+        return value;
+    }
+
+    /** @brief Forwards value_codec from InnerCodec if present (for optional support) */
+    constexpr auto get_value_codec() const noexcept
+        requires requires { inner_codec.value_codec; }
+    { return inner_codec.value_codec; }
+
+    /** @brief Forwards element_codec from InnerCodec if present (for vector/range support) */
+    constexpr auto get_element_codec() const noexcept
+        requires requires { inner_codec.element_codec; }
+    { return inner_codec.element_codec; }
+};
+
+} // namespace muesli::schema
+

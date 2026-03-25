@@ -1,0 +1,141 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/schema/named_codec>
+#include <muesli/schema/types>
+#include <muesli/codecs>
+
+#include <cstdint>
+#include <string>
+#include <tuple>
+#include <type_traits>
+
+namespace muesli {
+
+namespace schema_detail {
+
+    /**
+     * @brief Builds a concrete muesli codec from a compile-time schema node
+     *
+     * Uses canonical widest types so the resulting codec is binary-format
+     * compatible with the original codec that produced the schema:
+     *   signed_integer  -> int64_t
+     *   unsigned_integer -> uint64_t
+     *   floating_point   -> double
+     *   boolean          -> bool
+     *   string           -> std::string
+     *   monostate        -> std::monostate
+     */
+    struct codec_builder {
+
+        template<typename S>
+        static constexpr auto build(const S& schema) {
+            if constexpr (schema::is_primitive_v<S>) {
+                return build_primitive(schema);
+            }
+            else if constexpr (schema::is_optional_v<S>) {
+                return optional_codec(build(schema.inner));
+            }
+            else if constexpr (schema::is_array_v<S>) {
+                return vector_of(build(schema.element));
+            }
+            else if constexpr (schema::is_object_v<S>) {
+                return build_object(schema, std::make_index_sequence<
+                    std::tuple_size_v<std::decay_t<decltype(schema.fields)>>>{});
+            }
+            else if constexpr (schema::is_tuple_v<S>) {
+                return build_tuple(schema, std::make_index_sequence<
+                    std::tuple_size_v<std::decay_t<decltype(schema.elements)>>>{});
+            }
+            else if constexpr (schema::is_variant_v<S>) {
+                return build_variant(schema, std::make_index_sequence<
+                    std::tuple_size_v<std::decay_t<decltype(schema.alternatives)>>>{});
+            }
+        }
+
+    private:
+        template<schema::fundamental_kind K>
+        static constexpr auto build_primitive(const schema::primitive_schema<K>&) {
+            if constexpr (K == schema::fundamental_kind::boolean) {
+                return bool_codec;
+            }
+            else if constexpr (K == schema::fundamental_kind::signed_integer) {
+                return int64_codec;
+            }
+            else if constexpr (K == schema::fundamental_kind::unsigned_integer) {
+                return uint64_codec;
+            }
+            else if constexpr (K == schema::fundamental_kind::floating_point) {
+                return double_codec;
+            }
+            else if constexpr (K == schema::fundamental_kind::string) {
+                return string_codec;
+            }
+            else if constexpr (K == schema::fundamental_kind::monostate) {
+                return monostate_codec;
+            }
+        }
+
+        template<typename S, std::size_t... Is>
+        static constexpr auto build_object(const S& schema, std::index_sequence<Is...>) {
+            return tuple_codec(
+                schema::named_codec{
+                    build(std::get<Is>(schema.fields).schema),
+                    std::get<Is>(schema.fields).name
+                }...
+            );
+        }
+
+        template<typename S, std::size_t... Is>
+        static constexpr auto build_tuple(const S& schema, std::index_sequence<Is...>) {
+            return tuple_codec(build(std::get<Is>(schema.elements))...);
+        }
+
+        template<typename S, std::size_t... Is>
+        static constexpr auto build_variant(const S& schema, std::index_sequence<Is...>) {
+            return variant_codec(build(std::get<Is>(schema.alternatives))...);
+        }
+    };
+
+} // namespace schema_detail
+
+/**
+ * @brief Reconstruct a type-erased codec from a compile-time schema
+ *
+ * Walks the schema IR and builds a concrete muesli codec using canonical
+ * widest types (int64_t, uint64_t, double, bool, std::string, monostate).
+ * The resulting codec is structurally equivalent to the original and
+ * produces identical byte streams via binary_format, enabling data
+ * migration and upgrader workflows.
+ *
+ * Object schemas produce named tuple codecs (using schema::named_codec)
+ * so json_format emits JSON objects with the original key names.
+ *
+ * @tparam S A compile-time schema type (primitive_schema, object_schema, etc.)
+ * @param schema The schema to build a codec from
+ * @return A concrete muesli codec with canonical types
+ *
+ * @code
+ * static constexpr auto s = muesli::make_schema(point::codec);
+ * static constexpr auto c = muesli::make_codec(s);
+ * // c is a tuple_codec of named int64 fields "x" and "y"
+ * auto fmt = muesli::make_json_format<Backend>(c);
+ * auto j = fmt.serialize(std::tuple{int64_t{10}, int64_t{20}});
+ * // j == {"x": 10, "y": 20}
+ * @endcode
+ *
+ * @see make_schema
+ * @see schema::named_codec
+ */
+template<typename S>
+constexpr auto make_codec(const S& schema) {
+    return schema_detail::codec_builder::build(schema);
+}
+
+} // namespace muesli
+
