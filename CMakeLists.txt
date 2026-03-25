@@ -173,7 +173,7 @@ if(BUILD_TESTING)
     # Boost.JSON
     option(MUESLI_TEST_BOOST_JSON "Build Boost.JSON backend tests" ON)
     if(MUESLI_TEST_BOOST_JSON)
-        set(BOOST_INCLUDE_LIBRARIES json)
+        set(BOOST_INCLUDE_LIBRARIES json throw_exception)
         set(BOOST_ENABLE_CMAKE ON)
         FetchContent_Declare(Boost
             GIT_REPOSITORY https://github.com/boostorg/boost.git
@@ -182,8 +182,19 @@ if(BUILD_TESTING)
         )
         FetchContent_MakeAvailable(Boost)
 
+        # Boost::json is a built target (boost_json). On MSVC, compile it with /EHsc
+        # so BOOST_NO_EXCEPTIONS is not inferred from missing unwind semantics.
+        if(MSVC AND TARGET boost_json)
+            target_compile_options(boost_json PRIVATE /EHsc)
+        endif()
+
         add_muesli_test_exe(test_json_boost tests/test_json_boost.cpp)
-        target_link_libraries(test_json_boost PRIVATE Boost::json)
+        target_link_libraries(test_json_boost PRIVATE Boost::json Boost::throw_exception)
+        if(MSVC)
+            target_compile_options(test_json_boost PRIVATE /EHsc)
+        else()
+            target_compile_options(test_json_boost PRIVATE -fexceptions)
+        endif()
         add_test(NAME test_json_boost COMMAND test_json_boost)
     endif()
 
@@ -191,6 +202,22 @@ if(BUILD_TESTING)
         get_filename_component(MUESLI_CLANG_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
         set_tests_properties(${MUESLI_TEST_TARGETS} PROPERTIES
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${MUESLI_CLANG_RUNTIME_DIR}"
+        )
+    endif()
+
+    # Convenience target: run tests in parallel to reduce total local wall-time.
+    set(MUESLI_CTEST_JOBS "0" CACHE STRING "Number of jobs for the 'check' test target (0 = ctest default)")
+    if(MUESLI_CTEST_JOBS STREQUAL "0")
+        add_custom_target(check
+            COMMAND ${CMAKE_CTEST_COMMAND} -C $<CONFIG> --output-on-failure
+            DEPENDS ${MUESLI_TEST_TARGETS}
+            USES_TERMINAL
+        )
+    else()
+        add_custom_target(check
+            COMMAND ${CMAKE_CTEST_COMMAND} -C $<CONFIG> -j ${MUESLI_CTEST_JOBS} --output-on-failure
+            DEPENDS ${MUESLI_TEST_TARGETS}
+            USES_TERMINAL
         )
     endif()
 endif()
