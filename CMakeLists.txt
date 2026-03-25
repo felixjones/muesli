@@ -109,6 +109,9 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_json_format tests/test_json_format.cpp)
     add_test(NAME test_json_format COMMAND test_json_format)
 
+    add_muesli_test_exe(test_schema tests/test_schema.cpp)
+    add_test(NAME test_schema COMMAND test_schema)
+
     include(FetchContent)
 
     # nlohmann/json

@@ -1,0 +1,272 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/schema/types>
+#include <muesli/util/concepts>
+#include <muesli/util/type_traits>
+
+#include <optional>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <variant>
+
+namespace muesli {
+
+namespace schema_detail {
+
+    // -- Type detection traits (self-contained, no json_format dependency) --
+
+    template<typename T> struct is_std_string : std::false_type {};
+    template<typename C, typename Tr, typename A>
+    struct is_std_string<std::basic_string<C, Tr, A>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_std_string_v = is_std_string<std::decay_t<T>>::value;
+
+    template<typename T, typename = void>
+    struct is_optional_like : std::false_type {};
+    template<typename T>
+    struct is_optional_like<T, std::void_t<
+        decltype(std::declval<const T&>().has_value()),
+        decltype(*std::declval<const T&>())
+    >> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_optional_like_v = is_optional_like<std::decay_t<T>>::value;
+
+    template<typename T, typename = void>
+    struct is_sized_container : std::false_type {};
+    template<typename T>
+    struct is_sized_container<T, std::void_t<
+        decltype(std::declval<const T&>().begin()),
+        decltype(std::declval<const T&>().end()),
+        decltype(std::declval<const T&>().size())
+    >> : std::bool_constant<!is_std_string_v<T>> {};
+    template<typename T>
+    inline constexpr bool is_sized_container_v = is_sized_container<std::decay_t<T>>::value;
+
+    // -- Codec structural inspection ---------------------------------------
+
+    template<typename Codec>
+    concept HasElementCodec = requires(const Codec& c) { c.element_codec; } ||
+                              requires(const Codec& c) { c.arg_codec.element_codec; } ||
+                              requires(const Codec& c) { c.get_element_codec(); };
+
+    template<typename Codec>
+    concept HasValueCodec = requires(const Codec& c) { c.value_codec; } ||
+                            requires(const Codec& c) { c.arg_codec.value_codec; } ||
+                            requires(const Codec& c) { c.get_value_codec(); };
+
+    /** @brief True if Codec has `.inner` whose value_type matches its own (transparent wrapper) */
+    template<typename Codec, typename = void>
+    struct has_transparent_inner : std::false_type {};
+    template<typename Codec>
+    struct has_transparent_inner<Codec, std::void_t<
+        decltype(std::declval<const Codec&>().inner),
+        typename std::decay_t<decltype(std::declval<const Codec&>().inner)>::value_type
+    >> : std::bool_constant<
+        std::is_same_v<
+            std::decay_t<typename Codec::value_type>,
+            std::decay_t<typename std::decay_t<decltype(std::declval<const Codec&>().inner)>::value_type>
+        >
+    > {};
+    template<typename Codec>
+    inline constexpr bool has_transparent_inner_v = has_transparent_inner<std::decay_t<Codec>>::value;
+
+    template<typename Codec>
+    constexpr auto get_element_codec(const Codec& c) {
+        if constexpr (requires { c.element_codec; }) {
+            return c.element_codec;
+        } else if constexpr (requires { c.arg_codec.element_codec; }) {
+            return c.arg_codec.element_codec;
+        } else if constexpr (requires { c.get_element_codec(); }) {
+            return c.get_element_codec();
+        }
+    }
+
+    template<typename Codec>
+    constexpr auto get_value_codec(const Codec& c) {
+        if constexpr (requires { c.value_codec; }) {
+            return c.value_codec;
+        } else if constexpr (requires { c.arg_codec.value_codec; }) {
+            return c.arg_codec.value_codec;
+        } else if constexpr (requires { c.get_value_codec(); }) {
+            return c.get_value_codec();
+        }
+    }
+
+    // -- Extractor (struct enables mutual recursion between methods) -------
+
+    struct extractor {
+
+        /**
+         * @brief Main entry point -- dispatches on the codec's value_type
+         */
+        template<Codec C>
+        static constexpr auto extract(const C& codec) {
+            using val_t = std::decay_t<typename C::value_type>;
+
+            // -- Primitive / leaf types ------------------------------------
+            if constexpr (std::same_as<val_t, std::monostate>) {
+                return schema::primitive_schema<schema::primitive_kind::monostate>{};
+            }
+            else if constexpr (std::same_as<val_t, bool>) {
+                return schema::primitive_schema<schema::primitive_kind::boolean>{};
+            }
+            else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
+                return schema::primitive_schema<schema::primitive_kind::signed_integer>{};
+            }
+            else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
+                return schema::primitive_schema<schema::primitive_kind::unsigned_integer>{};
+            }
+            else if constexpr (std::is_floating_point_v<val_t>) {
+                return schema::primitive_schema<schema::primitive_kind::floating_point>{};
+            }
+            else if constexpr (is_std_string_v<val_t>) {
+                return schema::primitive_schema<schema::primitive_kind::string>{};
+            }
+
+            // -- Optional with value_codec --------------------------------
+            else if constexpr (is_optional_like_v<val_t> && HasValueCodec<C>) {
+                return extract_optional(codec);
+            }
+
+            // -- Sized container with element_codec -----------------------
+            else if constexpr (is_sized_container_v<val_t> && HasElementCodec<C>) {
+                return extract_array(codec);
+            }
+
+            // -- Direct tuple_codec (value_type is std::tuple) ------------
+            else if constexpr (muesli::is_tuple_v<val_t> && requires { codec.codecs; }) {
+                return extract_tuple_or_object(codec);
+            }
+
+            // -- Direct variant_codec (value_type is std::variant) --------
+            else if constexpr (muesli::is_variant_v<val_t> && requires { codec.codecs; }) {
+                constexpr auto N = std::tuple_size_v<std::decay_t<decltype(codec.codecs)>>;
+                return extract_variant(codec, std::make_index_sequence<N>{});
+            }
+
+            // -- Transparent wrapper (constrained_codec, or_else_codec) ---
+            // These codecs have `.inner` with the same value_type; unwrap
+            // to reach the structural codec (vector_codec, optional_codec…)
+            else if constexpr (has_transparent_inner_v<C>) {
+                return extract(codec.inner);
+            }
+
+            // -- Walk the codec chain -------------------------------------
+            else {
+                using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+                using encoded_type = typename next_codec_type::value_type;
+
+                if constexpr (muesli::is_tuple_v<encoded_type> &&
+                              requires { codec.next_codec().codecs; }) {
+                    return extract_tuple_or_object(codec.next_codec());
+                }
+                else if constexpr (muesli::is_variant_v<encoded_type> &&
+                                   requires { codec.next_codec().codecs; }) {
+                    auto next = codec.next_codec();
+                    constexpr auto N = std::tuple_size_v<std::decay_t<decltype(next.codecs)>>;
+                    return extract_variant(next, std::make_index_sequence<N>{});
+                }
+                else if constexpr (!std::same_as<val_t, encoded_type>) {
+                    return extract(codec.next_codec());
+                }
+                else {
+                    static_assert(!std::same_as<val_t, val_t>,
+                        "make_schema: unsupported terminal codec type");
+                }
+            }
+        }
+
+    private:
+        template<Codec C>
+        static constexpr auto extract_optional(const C& codec) {
+            auto innerCodec = get_value_codec(codec);
+            auto inner = extract(innerCodec);
+            return schema::optional_schema<std::decay_t<decltype(inner)>>{inner};
+        }
+
+        template<Codec C>
+        static constexpr auto extract_array(const C& codec) {
+            auto elemCodec = get_element_codec(codec);
+            auto elem = extract(elemCodec);
+            return schema::array_schema<std::decay_t<decltype(elem)>>{elem};
+        }
+
+        template<typename TupleCodec>
+        static constexpr auto extract_tuple_or_object(const TupleCodec& tc) {
+            using codecs_tuple_t = std::decay_t<decltype(tc.codecs)>;
+            constexpr auto N = std::tuple_size_v<codecs_tuple_t>;
+            if constexpr (all_named_v<codecs_tuple_t>) {
+                return extract_object(tc, std::make_index_sequence<N>{});
+            } else {
+                return extract_positional_tuple(tc, std::make_index_sequence<N>{});
+            }
+        }
+
+        template<typename ElemCodec>
+        static constexpr auto make_field(const ElemCodec& ec) {
+            auto innerSchema = extract(ec);
+            using schema_type = std::decay_t<decltype(innerSchema)>;
+            return schema::schema_field<schema_type>{
+                ec.member_name,
+                !schema::is_optional_v<schema_type>,
+                innerSchema
+            };
+        }
+
+        template<typename TupleCodec, std::size_t... Is>
+        static constexpr auto extract_object(const TupleCodec& tc, std::index_sequence<Is...>) {
+            auto fields = std::tuple{make_field(std::get<Is>(tc.codecs))...};
+            return schema::object_schema<std::decay_t<decltype(make_field(std::get<Is>(tc.codecs)))>...>{fields};
+        }
+
+        template<typename TupleCodec, std::size_t... Is>
+        static constexpr auto extract_positional_tuple(const TupleCodec& tc,
+                                                        std::index_sequence<Is...>) {
+            auto elems = std::tuple{extract(std::get<Is>(tc.codecs))...};
+            return schema::tuple_schema<std::decay_t<decltype(extract(std::get<Is>(tc.codecs)))>...>{elems};
+        }
+
+        template<typename VariantCodec, std::size_t... Is>
+        static constexpr auto extract_variant(const VariantCodec& vc, std::index_sequence<Is...>) {
+            auto alts = std::tuple{extract(std::get<Is>(vc.codecs))...};
+            return schema::variant_schema<std::decay_t<decltype(extract(std::get<Is>(vc.codecs)))>...>{alts};
+        }
+    };
+
+} // namespace schema_detail
+
+/**
+ * @brief Make a format-agnostic schema IR from any muesli codec at compile time
+ *
+ * Walks the codec's type chain and produces a constexpr schema value whose
+ * structure is fully encoded in its type.  The result is a literal type and
+ * can be stored as `static constexpr`.
+ *
+ * @tparam C A type satisfying the Codec concept
+ * @param codec The codec to make the schema from
+ * @return A compile-time schema value (primitive_schema, object_schema, etc.)
+ *
+ * @code
+ * static constexpr auto schema = muesli::make_schema(point::codec);
+ * static_assert(muesli::schema::is_object_v<decltype(schema)>);
+ * static_assert(std::get<0>(schema.fields).name == "x");
+ * @endcode
+ *
+ * @see schema::object_schema
+ * @see schema::primitive_schema
+ */
+template<Codec C>
+constexpr auto make_schema(const C& codec) {
+    return schema_detail::extractor::extract(codec);
+}
+
+} // namespace muesli
+
+
