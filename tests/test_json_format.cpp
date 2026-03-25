@@ -250,7 +250,7 @@ int main() {
         auto fmt = mu::make_json_format<B>(mu::optional_codec(mu::int32_codec));
         std::optional<int32_t> value = 42;
         auto j = fmt.serialize(value);
-        // Native: just the integer 42, not {"i":1, "v":42}
+        // Native: just the integer 42, not the variant wrapper [1, 42]
         assert(B::is_integer(j));
         assert(B::as_int64(j) == 42);
         auto d = fmt.deserialize(j);
@@ -265,21 +265,22 @@ int main() {
         auto d = fmt.deserialize(j);
         assert(d && !d->has_value());
     }
-    // -- 14: variant -----------------------------------------------------
+    // -- 14: variant -> [index, value] ----------------------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
         std::variant<int32_t, bool> v1 = int32_t{99};
         auto j1 = fmt.serialize(v1);
-        assert(B::is_object(j1));
-        assert(B::as_uint64(B::object_get(j1, "i")) == 0);
-        assert(B::as_int64(B::object_get(j1, "v")) == 99);
+        assert(B::is_array(j1) && B::array_size(j1) == 2);
+        assert(B::as_uint64(B::array_at(j1, 0)) == 0);
+        assert(B::as_int64(B::array_at(j1, 1)) == 99);
         auto d1 = fmt.deserialize(j1);
         assert(d1 && std::get<0>(*d1) == 99);
 
         std::variant<int32_t, bool> v2 = true;
         auto j2 = fmt.serialize(v2);
-        assert(B::as_uint64(B::object_get(j2, "i")) == 1);
-        assert(B::as_bool(B::object_get(j2, "v")) == true);
+        assert(B::is_array(j2) && B::array_size(j2) == 2);
+        assert(B::as_uint64(B::array_at(j2, 0)) == 1);
+        assert(B::as_bool(B::array_at(j2, 1)) == true);
         auto d2 = fmt.deserialize(j2);
         assert(d2 && std::get<1>(*d2) == true);
     }
@@ -616,29 +617,29 @@ int main() {
     // -- 45: variant with invalid index -> nullopt -----------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto node = B::make_object();
-        B::object_set(node, "i", B::make_uint(99));
-        B::object_set(node, "v", B::make_int(1));
+        auto node = B::make_array();
+        B::array_push_back(node, B::make_uint(99));
+        B::array_push_back(node, B::make_int(1));
         auto d = fmt.deserialize(node);
         assert(!d.has_value());
     }
-    // -- 46: variant missing "i" key -> nullopt --------------------------
+    // -- 46: variant array with missing value slot -> nullopt -------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto node = B::make_object();
-        B::object_set(node, "v", B::make_int(1));
+        auto node = B::make_array();
+        B::array_push_back(node, B::make_uint(0));
         auto d = fmt.deserialize(node);
         assert(!d.has_value());
     }
-    // -- 47: variant missing "v" key -> nullopt --------------------------
+    // -- 47: variant array with missing index slot -> nullopt -------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto node = B::make_object();
-        B::object_set(node, "i", B::make_uint(0));
+        auto node = B::make_array();
+        B::array_push_back(node, B::make_int(1));
         auto d = fmt.deserialize(node);
         assert(!d.has_value());
     }
-    // -- 48: variant given non-object -> nullopt -------------------------
+    // -- 48: variant given non-array -> nullopt --------------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
         auto d = fmt.deserialize(B::make_int(42));

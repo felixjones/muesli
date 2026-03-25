@@ -155,7 +155,7 @@ namespace json_detail {
  *
  * Codec-chain handling (for struct wrappers, transforms, etc.):
  * - std::tuple -> JSON array (positional)
- * - std::variant -> JSON object {"i": index, "v": value}
+ * - std::variant -> JSON array [index, value]
  *
  * @tparam C The codec to use for encoding/decoding
  * @tparam Backend A type satisfying the JsonBackend concept
@@ -504,26 +504,25 @@ struct json_format {
         }
     }
 
-    // Leaf: variant -> JSON object {"i": index, "v": value}
+    // Leaf: variant -> JSON array [index, value]
     json_type serialize_leaf(auto&& variant_value) const
         requires(is_variant_v<std::decay_t<decltype(variant_value)>> &&
                  requires { codec.next_codec().encode(std::forward<decltype(variant_value)>(variant_value)); })
     {
-        auto obj = Backend::make_object();
-        Backend::object_set(obj, "i", Backend::make_uint(static_cast<std::uint64_t>(variant_value.index())));
+        auto arr = Backend::make_array();
+        Backend::array_push_back(arr, Backend::make_uint(static_cast<std::uint64_t>(variant_value.index())));
         auto val_json = serialize_variant_impl(
             std::forward<decltype(variant_value)>(variant_value),
             std::make_index_sequence<std::variant_size_v<std::decay_t<decltype(variant_value)>>>{});
-        Backend::object_set(obj, "v", std::move(val_json));
-        return obj;
+        Backend::array_push_back(arr, std::move(val_json));
+        return arr;
     }
 
     std::optional<value_type> deserialize_leaf(const json_type& node) const
         requires(is_variant_v<std::decay_t<value_type>> && requires { codec.next_codec(); })
     {
-        if (!Backend::is_object(node)) return std::nullopt;
-        if (!Backend::object_has_key(node, "i") || !Backend::object_has_key(node, "v")) return std::nullopt;
-        auto idx = static_cast<std::size_t>(Backend::as_uint64(Backend::object_get(node, "i")));
+        if (!Backend::is_array(node) || Backend::array_size(node) != 2) return std::nullopt;
+        auto idx = static_cast<std::size_t>(Backend::as_uint64(Backend::array_at(node, 0)));
         if (idx >= std::variant_size_v<value_type>) return std::nullopt;
         return deserialize_variant_impl(node, idx,
                                         std::make_index_sequence<std::variant_size_v<value_type>>{});
@@ -759,7 +758,7 @@ struct json_format {
         if (I != active_index) return false;
         auto elem_codec = std::get<I>(next_codec.codecs);
         auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
-        const auto& val_node = Backend::object_get(node, "v");
+        const auto& val_node = Backend::array_at(node, 1);
         if (auto elem_opt = elem_fmt.deserialize(val_node)) {
             using encoded_variant_type = typename std::decay_t<decltype(codec.next_codec())>::value_type;
             encoded_variant_type encoded_var(std::in_place_index<I>, std::move(*elem_opt));

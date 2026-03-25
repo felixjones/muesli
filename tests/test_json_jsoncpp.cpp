@@ -224,12 +224,12 @@ int main() {
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::string_codec));
         using V = std::variant<int32_t, std::string>;
-        // JsonCpp object key order matches insertion order
+        // Array form: [index, value]
         auto j1 = fmt.serialize(V{int32_t{7}});
-        assert(B::is_object(j1));
+        assert(B::is_array(j1));
         auto d1 = fmt.deserialize(j1);
         assert(d1 && std::get<0>(*d1) == 7);
-        auto d2 = fmt.deserialize(from_json("{\"i\":1,\"v\":\"hi\"}"));
+        auto d2 = fmt.deserialize(from_json("[1,\"hi\"]"));
         assert(d2 && std::get<1>(*d2) == "hi");
     }
     // -- 21: varint (signed) -> JSON integer -----------------------------
@@ -329,14 +329,14 @@ int main() {
     // -- 30: variant string round-trip -----------------------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::string_codec));
-        auto obj1 = fmt.deserialize(from_json("{\"i\":0,\"v\":42}"));
+        auto obj1 = fmt.deserialize(from_json("[0,42]"));
         assert(obj1 && std::get<0>(*obj1) == 42);
         // Round-trip: re-serialize and parse back
         std::string rt1 = to_json(fmt.serialize(*obj1));
         auto back1 = fmt.deserialize(from_json(rt1));
         assert(back1 && std::get<0>(*back1) == 42);
 
-        auto obj2 = fmt.deserialize(from_json("{\"i\":1,\"v\":\"hello\"}"));
+        auto obj2 = fmt.deserialize(from_json("[1,\"hello\"]"));
         assert(obj2 && std::get<1>(*obj2) == "hello");
         std::string rt2 = to_json(fmt.serialize(*obj2));
         auto back2 = fmt.deserialize(from_json(rt2));
@@ -541,19 +541,19 @@ int main() {
     // -- 49: variant with invalid index -> nullopt -----------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto d = fmt.deserialize(from_json("{\"i\":99,\"v\":1}"));
+        auto d = fmt.deserialize(from_json("[99,1]"));
         assert(!d.has_value());
     }
-    // -- 50: variant missing "i" key -> nullopt --------------------------
+    // -- 50: variant array missing value slot -> nullopt ------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto d = fmt.deserialize(from_json("{\"v\":1}"));
+        auto d = fmt.deserialize(from_json("[0]"));
         assert(!d.has_value());
     }
-    // -- 51: variant missing "v" key -> nullopt --------------------------
+    // -- 51: variant array missing index slot -> nullopt ------------------
     {
         auto fmt = mu::make_json_format<B>(mu::variant_codec(mu::int32_codec, mu::bool_codec));
-        auto d = fmt.deserialize(from_json("{\"i\":0}"));
+        auto d = fmt.deserialize(from_json("[1]"));
         assert(!d.has_value());
     }
     // -- 52: vector given non-array -> nullopt ---------------------------
