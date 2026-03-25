@@ -100,15 +100,16 @@ int main() {
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == 999u);
     }
-    // -- 1d: floating_point -> double_codec
+    // -- 1d: float_32 -> float_codec
     {
         constexpr auto schema = mu::make_schema(mu::float_codec);
         constexpr auto codec = mu::make_codec(schema);
+        static_assert(std::is_same_v<typename std::decay_t<decltype(codec)>::value_type, float>);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, 3.14);
+        auto bytes = to_bytes(fmt, 3.14f);
         auto d = from_bytes(fmt, bytes);
-        assert(d && (*d - 3.14) < 0.001);
+        assert(d && (*d - 3.14f) < 0.001f);
     }
     // -- 1e: boolean -> bool_codec
     {
@@ -289,17 +290,17 @@ int main() {
         assert(d && d->size() == 3);
         assert((*d)[0] == "alpha" && (*d)[1] == "beta" && (*d)[2] == "gamma");
     }
-    // -- 3d: vector<double>
+    // -- 3d: vector<float>
     {
         constexpr auto schema = mu::make_schema(mu::vector_of(mu::float_codec));
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::vector<double> value = {1.1, 2.2, 3.3};
+        std::vector<float> value = {1.1f, 2.2f, 3.3f};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d && d->size() == 3);
-        assert((*d)[0] == 1.1 && (*d)[1] == 2.2 && (*d)[2] == 3.3);
+        assert((*d)[0] == 1.1f && (*d)[1] == 2.2f && (*d)[2] == 3.3f);
     }
 
     // =====================================================================
@@ -355,7 +356,7 @@ int main() {
     // 5. Tuple codec from schema (positional)
     // =====================================================================
 
-    // -- 5a: tuple<int64, double, bool>
+    // -- 5a: tuple<int64, float, bool>
     {
         constexpr auto origCodec = mu::tuple_codec(mu::int32_codec, mu::float_codec, mu::bool_codec);
         constexpr auto schema = mu::make_schema(origCodec);
@@ -364,12 +365,12 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{7}, 2.5, true};
+        val_t value{std::int64_t{7}, 2.5f, true};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
         assert(std::get<0>(*d) == 7);
-        assert(std::get<1>(*d) == 2.5);
+        assert(std::get<1>(*d) == 2.5f);
         assert(std::get<2>(*d) == true);
     }
     // -- 5b: tuple<string, uint64> (string before int tests sequential stream consumption)

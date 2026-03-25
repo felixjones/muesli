@@ -118,20 +118,112 @@ namespace schema_detail {
             else if constexpr (std::same_as<val_t, bool>) {
                 return schema::primitive_schema<schema::fundamental_kind::boolean>{};
             }
-            else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
-                return schema::primitive_schema<schema::fundamental_kind::signed_integer>{};
+            // -- Exact fixed-width integer types --
+            else if constexpr (std::same_as<val_t, std::int8_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::int8>{};
             }
-            else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
-                return schema::primitive_schema<schema::fundamental_kind::unsigned_integer>{};
+            else if constexpr (std::same_as<val_t, std::uint8_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uint8>{};
             }
-            else if constexpr (std::is_floating_point_v<val_t>) {
-                return schema::primitive_schema<schema::fundamental_kind::floating_point>{};
+            else if constexpr (std::same_as<val_t, std::int16_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::int16>{};
             }
-            else if constexpr (is_std_string_v<val_t>) {
-                return schema::primitive_schema<schema::fundamental_kind::string>{};
+            else if constexpr (std::same_as<val_t, std::uint16_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uint16>{};
+            }
+            else if constexpr (std::same_as<val_t, std::int32_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::int32>{};
+            }
+            else if constexpr (std::same_as<val_t, std::uint32_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uint32>{};
+            }
+            else if constexpr (std::same_as<val_t, std::int64_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::int64>{};
+            }
+            else if constexpr (std::same_as<val_t, std::uint64_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uint64>{};
+            }
+            else if constexpr (std::same_as<val_t, std::intmax_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::intmax>{};
+            }
+            else if constexpr (std::same_as<val_t, std::uintmax_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uintmax>{};
+            }
+            else if constexpr (std::same_as<val_t, std::intptr_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::intptr>{};
+            }
+            else if constexpr (std::same_as<val_t, std::uintptr_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::uintptr>{};
+            }
+            else if constexpr (std::same_as<val_t, std::size_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::size>{};
+            }
+            else if constexpr (std::same_as<val_t, std::ptrdiff_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::ptrdiff>{};
             }
             else if constexpr (std::same_as<val_t, std::byte>) {
-                return schema::primitive_schema<schema::fundamental_kind::unsigned_integer>{};
+                return schema::primitive_schema<schema::fundamental_kind::byte>{};
+            }
+            // -- Exact platform-dependent integer types --
+            else if constexpr (std::same_as<val_t, short>) {
+                return schema::primitive_schema<schema::fundamental_kind::short_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, unsigned short>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_short_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, int>) {
+                return schema::primitive_schema<schema::fundamental_kind::int_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, unsigned int>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_int_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, long>) {
+                return schema::primitive_schema<schema::fundamental_kind::long_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, unsigned long>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_long_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, long long>) {
+                return schema::primitive_schema<schema::fundamental_kind::long_long_integer>{};
+            }
+            else if constexpr (std::same_as<val_t, unsigned long long>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_long_long_integer>{};
+            }
+            // -- Exact character types --
+            else if constexpr (std::same_as<val_t, char>) {
+                return schema::primitive_schema<schema::fundamental_kind::character>{};
+            }
+            else if constexpr (std::same_as<val_t, signed char>) {
+                return schema::primitive_schema<schema::fundamental_kind::signed_character>{};
+            }
+            else if constexpr (std::same_as<val_t, unsigned char>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_character>{};
+            }
+            else if constexpr (std::same_as<val_t, wchar_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::wide_character>{};
+            }
+            else if constexpr (std::same_as<val_t, char8_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::char8>{};
+            }
+            else if constexpr (std::same_as<val_t, char16_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::char16>{};
+            }
+            else if constexpr (std::same_as<val_t, char32_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::char32>{};
+            }
+            // -- Exact floating point types --
+            else if constexpr (std::same_as<val_t, float>) {
+                return schema::primitive_schema<schema::fundamental_kind::float_32>{};
+            }
+            else if constexpr (std::same_as<val_t, double>) {
+                return schema::primitive_schema<schema::fundamental_kind::float_64>{};
+            }
+            else if constexpr (std::same_as<val_t, long double>) {
+                return schema::primitive_schema<schema::fundamental_kind::float_128>{};
+            }
+            // -- String --
+            else if constexpr (is_std_string_v<val_t>) {
+                return schema::primitive_schema<schema::fundamental_kind::string>{};
             }
 
             // -- Optional with value_codec --------------------------------
