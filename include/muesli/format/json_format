@@ -469,20 +469,34 @@ struct json_format {
         requires(is_tuple_v<std::decay_t<decltype(tuple_value)>> &&
                  requires { codec.next_codec().encode(std::forward<decltype(tuple_value)>(tuple_value)); })
     {
-        using codecs_tuple_t = std::decay_t<decltype(codec.next_codec().codecs)>;
-        if constexpr (all_named_v<codecs_tuple_t>) {
+        // Names may live on codec.next_codec().codecs (apply_codec path) or
+        // on codec.codecs directly (tuple_codec with named children, e.g. make_codec).
+        using next_codecs_tuple_t = std::decay_t<decltype(codec.next_codec().codecs)>;
+        constexpr auto seq = std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{};
+        if constexpr (all_named_v<next_codecs_tuple_t>) {
             assert(!has_duplicate_names(codec.next_codec().codecs) &&
                    "json_format: duplicate member names detected in all-named tuple");
-            return serialize_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value),
-                                               std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
-        } else if constexpr (any_named_v<codecs_tuple_t>) {
+            return serialize_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
+        } else if constexpr (any_named_v<next_codecs_tuple_t>) {
             assert(!has_duplicate_names(codec.next_codec().codecs) &&
                    "json_format: duplicate member names detected in mixed-named tuple");
-            return serialize_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value),
-                                              std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
+            return serialize_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
+        } else if constexpr (requires { codec.codecs; }) {
+            // Self-named path: names are on current level (e.g. make_codec output)
+            using self_codecs_tuple_t = std::decay_t<decltype(codec.codecs)>;
+            if constexpr (all_named_v<self_codecs_tuple_t>) {
+                assert(!has_duplicate_names(codec.codecs) &&
+                       "json_format: duplicate member names detected in all-named tuple");
+                return serialize_self_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
+            } else if constexpr (any_named_v<self_codecs_tuple_t>) {
+                assert(!has_duplicate_names(codec.codecs) &&
+                       "json_format: duplicate member names detected in mixed-named tuple");
+                return serialize_self_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
+            } else {
+                return serialize_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
+            }
         } else {
-            return serialize_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value),
-                                        std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{});
+            return serialize_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
         }
     }
 
@@ -576,6 +590,16 @@ struct json_format {
         return obj;
     }
 
+    // Self-named variant: names are on codec.codecs (current level)
+    template<typename TupleValue, std::size_t... Is>
+    json_type serialize_self_named_object_impl(TupleValue&& tuple_value, std::index_sequence<Is...>) const {
+        auto obj = Backend::make_object();
+        (serialize_named_object_element<Is>(obj, std::get<Is>(std::forward<TupleValue>(tuple_value)),
+                                            std::get<Is>(codec.codecs)),
+         ...);
+        return obj;
+    }
+
     template<std::size_t I, typename ElemValue, typename ElemCodec>
     void serialize_named_object_element(json_type& obj, ElemValue&& elem_value, const ElemCodec& elem_codec) const {
         auto elem_fmt = json_format<ElemCodec, Backend>(elem_codec);
@@ -627,6 +651,16 @@ struct json_format {
         auto arr = Backend::make_array();
         (serialize_mixed_tuple_element<Is>(arr, std::get<Is>(std::forward<TupleValue>(tuple_value)),
                                            std::get<Is>(next_codec.codecs)),
+         ...);
+        return arr;
+    }
+
+    // Self-named variant: names are on codec.codecs (current level)
+    template<typename TupleValue, std::size_t... Is>
+    json_type serialize_self_mixed_tuple_impl(TupleValue&& tuple_value, std::index_sequence<Is...>) const {
+        auto arr = Backend::make_array();
+        (serialize_mixed_tuple_element<Is>(arr, std::get<Is>(std::forward<TupleValue>(tuple_value)),
+                                           std::get<Is>(codec.codecs)),
          ...);
         return arr;
     }
