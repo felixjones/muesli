@@ -135,6 +135,13 @@ struct apply_codec : fluent::optionable<apply_codec<ArgCodec, ValueType>>,
                 return std::apply(
                     []<typename... Arg>(Arg&&... args) { return value_type{std::forward<Arg>(args)...}; }, value);
             }
+        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+            if constexpr (requires { value_type{value.begin(), value.end()}; }) {
+                return value_type{value.begin(), value.end()};
+            } else {
+                static_assert(sizeof(value_type) == 0,
+                              "apply_codec: Unable to decode ranges encoded_type to value_type");
+            }
         } else if constexpr (std::constructible_from<value_type, encoded_type>) {
             return value_type{value};
         } else if constexpr (std::is_convertible_v<encoded_type, value_type>) {

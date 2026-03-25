@@ -10,7 +10,6 @@
 
 #include <cassert>
 #include <cmath>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -172,6 +171,5 @@ int main() {
         assert(restored->members[1].age == 25 && restored->members[1].name == "Bob");
     }
 
-    std::cout << "All named member tests passed!" << std::endl;
     return 0;
 }

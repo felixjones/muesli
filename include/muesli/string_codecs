@@ -36,7 +36,10 @@ inline constexpr auto basic_string_codec = transform_codec(
         });
     },
     // Decode: range_holder<CharT> -> std::basic_string (null terminator removed)
-    [](range_holder<CharT>&& holder) {
+    // Accepts const reference because range_holder arrives as const from
+    // range_codec::decode's iterator (const T&). Iteration still works because
+    // range_holder's begin/end are const (internal generator state is mutable).
+    [](const range_holder<CharT>& holder) {
         std::basic_string<CharT, Traits, Allocator> result;
         for (auto&& ch : holder) {
             if (ch == CharT{}) {

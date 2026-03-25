@@ -111,7 +111,9 @@ struct delimited_codec : fluent::optionable<delimited_codec<ElementCodec, Delimi
 
     /**
      * @brief Encodes a const range by consuming it immediately
-     * @note Uses const_cast because the value is owned and consumed during encoding
+     * @note range_holder is move-only; this cast is safe because the holder is
+     *       consumed lazily through const begin()/end() and not aliased after
+     *       the encode call returns.
      */
     encoded_type encode(const value_type& value) const {
         return encode(std::move(const_cast<value_type&>(value)));
@@ -136,6 +138,8 @@ struct delimited_codec : fluent::optionable<delimited_codec<ElementCodec, Delimi
     };
 
     // decode - const lvalue reference overload (for const references from tuple)
+    // Safe for range_holder because iteration mutates internal generator state,
+    // not the logical value observed by callers.
     constexpr value_type decode(const encoded_type& encoded) const {
         return decode(std::move(const_cast<encoded_type&>(encoded)));
     }

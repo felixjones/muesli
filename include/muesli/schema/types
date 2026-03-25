@@ -14,9 +14,9 @@
 namespace muesli::schema {
 
 /**
- * @brief Enumeration of primitive type kinds recognised by the schema IR
+ * @brief Enumeration of fundamental type kinds recognised by the schema IR
  */
-enum class primitive_kind : std::uint8_t {
+enum class fundamental_kind : std::uint8_t {
     boolean,
     signed_integer,
     unsigned_integer,
@@ -25,15 +25,18 @@ enum class primitive_kind : std::uint8_t {
     monostate
 };
 
+// Compatibility alias for older call sites.
+using primitive_kind = fundamental_kind;
+
 // -- Schema node types (compile-time, zero-overhead) -----------------------
 
 /**
  * @brief Schema node for a primitive (leaf) type
- * @tparam K The primitive kind
+ * @tparam K The fundamental kind
  */
-template<primitive_kind K>
+template<fundamental_kind K>
 struct primitive_schema {
-    static constexpr primitive_kind kind = K;
+    static constexpr fundamental_kind kind = K;
 };
 
 /**
@@ -41,7 +44,7 @@ struct primitive_schema {
  * @tparam Schema The schema type for this field's value
  *
  * @code
- * schema_field<primitive_schema<primitive_kind::signed_integer>>{"age", true, {}}
+ * schema_field<primitive_schema<fundamental_kind::signed_integer>>{"age", true, {}}
  * @endcode
  */
 template<typename Schema>
@@ -117,7 +120,7 @@ variant_schema(std::tuple<Alternatives...>) -> variant_schema<Alternatives...>;
 
 /** @brief True if T is a primitive_schema */
 template<typename T> struct is_primitive : std::false_type {};
-template<primitive_kind K> struct is_primitive<primitive_schema<K>> : std::true_type {};
+template<fundamental_kind K> struct is_primitive<primitive_schema<K>> : std::true_type {};
 template<typename T> inline constexpr bool is_primitive_v = is_primitive<std::decay_t<T>>::value;
 
 /** @brief True if T is an object_schema */

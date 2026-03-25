@@ -9,7 +9,6 @@
 #include <muesli/codecs>
 
 #include <cassert>
-#include <iostream>
 
 using B = muesli::nlohmann_json_backend;
 namespace mu = muesli;
@@ -124,6 +123,5 @@ int main() {
         assert(result->loglevel == "verbose");
     }
 
-    std::cout << "All or_else JSON tests passed!" << std::endl;
     return 0;
 }

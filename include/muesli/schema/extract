@@ -11,6 +11,7 @@
 #include <muesli/util/type_traits>
 
 #include <optional>
+#include <cstddef>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -112,22 +113,25 @@ namespace schema_detail {
 
             // -- Primitive / leaf types ------------------------------------
             if constexpr (std::same_as<val_t, std::monostate>) {
-                return schema::primitive_schema<schema::primitive_kind::monostate>{};
+                return schema::primitive_schema<schema::fundamental_kind::monostate>{};
             }
             else if constexpr (std::same_as<val_t, bool>) {
-                return schema::primitive_schema<schema::primitive_kind::boolean>{};
+                return schema::primitive_schema<schema::fundamental_kind::boolean>{};
             }
             else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
-                return schema::primitive_schema<schema::primitive_kind::signed_integer>{};
+                return schema::primitive_schema<schema::fundamental_kind::signed_integer>{};
             }
             else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
-                return schema::primitive_schema<schema::primitive_kind::unsigned_integer>{};
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_integer>{};
             }
             else if constexpr (std::is_floating_point_v<val_t>) {
-                return schema::primitive_schema<schema::primitive_kind::floating_point>{};
+                return schema::primitive_schema<schema::fundamental_kind::floating_point>{};
             }
             else if constexpr (is_std_string_v<val_t>) {
-                return schema::primitive_schema<schema::primitive_kind::string>{};
+                return schema::primitive_schema<schema::fundamental_kind::string>{};
+            }
+            else if constexpr (std::same_as<val_t, std::byte>) {
+                return schema::primitive_schema<schema::fundamental_kind::unsigned_integer>{};
             }
 
             // -- Optional with value_codec --------------------------------

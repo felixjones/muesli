@@ -11,7 +11,6 @@
 #include <array>
 #include <cassert>
 #include <cmath>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -569,6 +568,5 @@ int main() {
         assert(!d.has_value());
     }
 
-    std::cout << "All JsonCpp tests passed!" << std::endl;
     return 0;
 }

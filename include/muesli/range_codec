@@ -64,6 +64,9 @@ struct range_codec : fluent::optionable<range_codec<ElementCodec>>,
 
     /** @brief Encodes a range by lazily encoding each element */
     encoded_type encode(auto&& value) const {
+        // range_holder is move-only. For const lvalue callers we rely on its
+        // const begin()/end() that still advance internal mutable generator
+        // state, so consuming through this moved reference is safe.
         return encoded_type([val = std::move(const_cast<value_type&>(value)), it = typename value_type::iterator{},
                              end = typename value_type::iterator{}, codec = element_codec,
                              is_initialized = false]() mutable -> std::optional<typename next_codec_type::value_type> {
@@ -101,7 +104,12 @@ struct range_codec : fluent::optionable<range_codec<ElementCodec>>,
             }
 
             if (it != end) {
-                auto decoded_element = codec.decode(std::move(*it));
+                // const_cast is safe here: range_holder::iterator returns const T& because
+                // input_iterator requires a single reference type, and span-backed iterators
+                // yield const refs. However, for generator-backed iterators (always the case
+                // in deserialization), the cached value lives in a mutable std::optional<T>
+                // owned by the iterator. We move from it and immediately advance past it.
+                auto decoded_element = codec.decode(std::move(const_cast<std::decay_t<decltype(*it)>&>(*it)));
                 ++it;
                 return decoded_element;
             }

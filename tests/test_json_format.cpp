@@ -10,7 +10,6 @@
 #include <array>
 #include <cassert>
 #include <cmath>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -671,6 +670,5 @@ int main() {
         assert(!d.has_value());
     }
 
-    std::cout << "All json_format tests passed!" << std::endl;
     return 0;
 }

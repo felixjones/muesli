@@ -11,7 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
 #include <map>
 #include <optional>
 #include <string>
@@ -368,6 +367,19 @@ int main() {
         constexpr auto node = mu::make_schema(mu::unsigned_char_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
         static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+    }
+    {
+        constexpr auto node = mu::make_schema(mu::wchar_codec);
+        static_assert(s::is_primitive_v<decltype(node)>);
+        static_assert(
+            decltype(node)::kind == s::fundamental_kind::signed_integer ||
+            decltype(node)::kind == s::fundamental_kind::unsigned_integer
+        );
+    }
+    {
+        constexpr auto node = mu::make_schema(mu::byte_codec);
+        static_assert(s::is_primitive_v<decltype(node)>);
+        static_assert(decltype(node)::kind == s::fundamental_kind::unsigned_integer);
     }
 
     // =====================================================================
@@ -935,7 +947,6 @@ int main() {
     }
 #endif
 
-    std::cout << "All schema tests passed!" << std::endl;
     return 0;
 }
 

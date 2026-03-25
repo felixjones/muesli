@@ -152,7 +152,11 @@ struct binary_format {
             auto next_codec = codec.next_codec();
             binary_format<next_codec_type, ByteT> next_format{next_codec};
             if (auto encoded = next_format.deserialize(input)) {
-                return codec.decode(std::move(*encoded));
+                try {
+                    return codec.decode(std::move(*encoded));
+                } catch (...) {
+                    return std::nullopt;
+                }
             }
         }
         return std::nullopt;
@@ -165,17 +169,21 @@ struct binary_format {
         return std::monostate{};
     }
 
-    constexpr value_type deserialize_primitive(InputStream<ByteT> auto& input) const
+    constexpr std::optional<value_type> deserialize_primitive(InputStream<ByteT> auto& input) const
         requires std::is_fundamental_v<value_type>
     {
+        using byte_array_t = std::array<ByteT, sizeof(value_type)>;
         align_input(input, alignof(value_type));
-        const std::array<ByteT, sizeof(value_type)> value = read_bytes<sizeof(value_type)>(input);
+        const auto value = read_bytes<sizeof(value_type)>(input);
+        if (!value.has_value()) {
+            return std::nullopt;
+        }
         if constexpr (std::is_trivially_copyable_v<value_type>) {
-            return std::bit_cast<value_type>(value);
+            return std::bit_cast<value_type>(*value);
         } else if constexpr (requires { value_type(value.begin(), value.end()); }) {
-            return value_type(value.begin(), value.end());
-        } else if constexpr (std::constructible_from<value_type, decltype(value)>) {
-            return value_type(value);
+            return value_type(value->begin(), value->end());
+        } else if constexpr (std::constructible_from<value_type, byte_array_t>) {
+            return value_type(*value);
         } else {
             static_assert(sizeof(value_type) == 0, "Cannot construct value_type from byte array");
         }
@@ -234,12 +242,18 @@ struct binary_format {
         requires(is_range_holder_v<std::decay_t<decltype(range_value)>> && requires { codec.element_codec; })
     {
         auto element_codec = codec.element_codec;
+        auto elem_fmt = binary_format<decltype(element_codec), ByteT>(element_codec);
         auto next_element_codec = element_codec.next_codec();
-        auto elem_fmt = binary_format<decltype(next_element_codec), ByteT>(next_element_codec);
+        auto next_elem_fmt = binary_format<decltype(next_element_codec), ByteT>(next_element_codec);
         for (auto&& elem : range_value) {
-            auto encoded_elem = element_codec.encode(std::forward<decltype(elem)>(elem));
-            if (!elem_fmt.serialize(std::move(encoded_elem), output)) {
-                return false;
+            if constexpr (requires { element_codec.encode(std::forward<decltype(elem)>(elem)); }) {
+                if (!elem_fmt.serialize(std::forward<decltype(elem)>(elem), output)) {
+                    return false;
+                }
+            } else {
+                if (!next_elem_fmt.serialize(std::forward<decltype(elem)>(elem), output)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -273,17 +287,51 @@ struct binary_format {
   private:
     template<InputStream<ByteT> ByteStream, std::size_t... Is>
     constexpr std::optional<value_type> deserialize_tuple_impl(ByteStream& input, std::index_sequence<Is...>) const {
-        auto next_codec = codec.next_codec();
+        if constexpr (requires { codec.codecs; }) {
+            // Sequential full-chain deserialization: each element is fully deserialized
+            // (including stream consumption) before the next element begins. This ensures
+            // stream-consuming codecs like delimited_codec (null-terminated strings) fully
+            // advance the stream position before subsequent elements read from it.
+            std::tuple<std::optional<std::tuple_element_t<Is, value_type>>...> elements;
+            bool all_ok = true;
 
-        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(next_codec.codecs)>::value_type>...>
-            elements{deserialize_element_encoded(input, std::get<Is>(next_codec.codecs))...};
+            auto deserialize_one = [&]<std::size_t I>() {
+                if (!all_ok) return;
+                auto elem_codec = std::get<I>(codec.codecs);
+                using elem_codec_t = std::decay_t<decltype(elem_codec)>;
+                binary_format<elem_codec_t, ByteT> elem_fmt{elem_codec};
+                if (auto result = elem_fmt.deserialize(input)) {
+                    std::get<I>(elements) = std::move(*result);
+                } else {
+                    all_ok = false;
+                }
+            };
 
-        if (check_all_have_value<Is...>(elements)) {
-            auto encoded_tuple = std::make_tuple(std::move(*std::get<Is>(elements))...);
-            return std::optional<value_type>{codec.decode(std::move(encoded_tuple))};
+            (deserialize_one.template operator()<Is>(), ...);
+
+            if (all_ok) {
+                return value_type{std::move(*std::get<Is>(elements))...};
+            }
+            return std::nullopt;
+        } else {
+            // Fallback for codecs without direct element access (e.g. constrained tuple):
+            // deserialize at the next_codec level, then decode the whole tuple at once.
+            auto next_codec = codec.next_codec();
+
+            std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(next_codec.codecs)>::value_type>...>
+                elements{deserialize_element_encoded(input, std::get<Is>(next_codec.codecs))...};
+
+            if (check_all_have_value<Is...>(elements)) {
+                auto encoded_tuple = std::make_tuple(std::move(*std::get<Is>(elements))...);
+                try {
+                    return std::optional<value_type>{codec.decode(std::move(encoded_tuple))};
+                } catch (...) {
+                    return std::nullopt;
+                }
+            }
+
+            return std::nullopt;
         }
-
-        return std::nullopt;
     }
 
     template<std::size_t... Is, typename Tuple>
@@ -307,8 +355,11 @@ struct binary_format {
 
         // Read the index
         align_input(input, alignof(index_type));
-        const std::array<ByteT, sizeof(index_type)> index_bytes = read_bytes<sizeof(index_type)>(input);
-        const index_type active_index = std::bit_cast<index_type>(index_bytes);
+        const auto index_bytes = read_bytes<sizeof(index_type)>(input);
+        if (!index_bytes.has_value()) {
+            return std::nullopt;
+        }
+        const index_type active_index = std::bit_cast<index_type>(*index_bytes);
 
         if (active_index >= variant_alternative_count) {
             return std::nullopt; // Invalid index
@@ -338,9 +389,13 @@ struct binary_format {
         auto elem_fmt = binary_format<decltype(elem_codec), ByteT>(elem_codec);
 
         if (auto elem_opt = elem_fmt.deserialize(input)) {
-            using encoded_variant_type = typename decltype(next_codec)::value_type;
+            using encoded_variant_type = typename NextCodec::value_type;
             encoded_variant_type encoded_var(std::in_place_index<I>, std::move(*elem_opt));
-            result = codec.decode(std::move(encoded_var));
+            try {
+                result = codec.decode(std::move(encoded_var));
+            } catch (...) {
+                result.reset();
+            }
         }
 
         return true;
@@ -445,7 +500,11 @@ struct binary_format {
         }
         std::size_t current_pos = 0;
         if constexpr (requires { input.tellg(); }) {
-            current_pos = static_cast<std::size_t>(input.tellg());
+            auto pos = input.tellg();
+            if (pos == decltype(pos){-1}) {
+                return;
+            }
+            current_pos = static_cast<std::size_t>(pos);
         } else {
             static_assert(sizeof(ByteT) == 0, "Input stream does not support tellg for alignment");
         }
@@ -496,12 +555,24 @@ struct binary_format {
     }
 
     template<std::size_t N, InputStream<ByteT> ByteStream>
-    constexpr std::array<ByteT, N> read_bytes(ByteStream& input) const {
-        std::array<ByteT, N> value;
+    constexpr std::optional<std::array<ByteT, N>> read_bytes(ByteStream& input) const {
+        std::array<ByteT, N> value{};
         if constexpr (requires { input.read(value.data(), N); }) {
             input.read(value.data(), N);
+            if constexpr (requires { input.gcount(); }) {
+                if (input.gcount() != static_cast<std::streamsize>(N)) {
+                    return std::nullopt;
+                }
+            } else if constexpr (requires { static_cast<bool>(input); }) {
+                if (!input) {
+                    return std::nullopt;
+                }
+            }
         } else if constexpr (requires { input.sgetn(value.data(), static_cast<std::streamsize>(N)); }) {
-            input.sgetn(value.data(), static_cast<std::streamsize>(N));
+            const auto read = input.sgetn(value.data(), static_cast<std::streamsize>(N));
+            if (read != static_cast<std::streamsize>(N)) {
+                return std::nullopt;
+            }
         } else {
             static_assert(N == 0, "Cannot read bytes from stream");
         }
