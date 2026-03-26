@@ -19,6 +19,79 @@
 namespace mu = muesli;
 namespace s = muesli::schema;
 
+// -- Compile-time helpers for platform-dependent kind expectations ----------
+// The extractor maps C++ types to fundamental_kind using an if-else chain
+// where fixed-width types (int32_t, int64_t, ...) are checked before
+// platform-dependent types (int, long, ...). Because typedefs alias
+// differently across platforms (e.g. int64_t = long long on MSVC but
+// long on GCC/Linux), the exact kind for a given codec depends on
+// which branch matches first. These helpers compute the expected kind
+// at compile time so the test works on all platforms.
+
+template<typename T>
+constexpr s::fundamental_kind expected_kind_for() {
+    using V = std::decay_t<T>;
+    if constexpr (std::same_as<V, std::monostate>) return s::fundamental_kind::monostate;
+    else if constexpr (std::same_as<V, bool>) return s::fundamental_kind::boolean;
+    else if constexpr (std::same_as<V, std::int8_t>) return s::fundamental_kind::int8;
+    else if constexpr (std::same_as<V, std::uint8_t>) return s::fundamental_kind::uint8;
+    else if constexpr (std::same_as<V, std::int16_t>) return s::fundamental_kind::int16;
+    else if constexpr (std::same_as<V, std::uint16_t>) return s::fundamental_kind::uint16;
+    else if constexpr (std::same_as<V, std::int32_t>) return s::fundamental_kind::int32;
+    else if constexpr (std::same_as<V, std::uint32_t>) return s::fundamental_kind::uint32;
+    else if constexpr (std::same_as<V, std::int64_t>) return s::fundamental_kind::int64;
+    else if constexpr (std::same_as<V, std::uint64_t>) return s::fundamental_kind::uint64;
+    else if constexpr (std::same_as<V, std::intmax_t>) return s::fundamental_kind::intmax;
+    else if constexpr (std::same_as<V, std::uintmax_t>) return s::fundamental_kind::uintmax;
+    else if constexpr (std::same_as<V, std::intptr_t>) return s::fundamental_kind::intptr;
+    else if constexpr (std::same_as<V, std::uintptr_t>) return s::fundamental_kind::uintptr;
+    else if constexpr (std::same_as<V, std::size_t>) return s::fundamental_kind::size;
+    else if constexpr (std::same_as<V, std::ptrdiff_t>) return s::fundamental_kind::ptrdiff;
+    else if constexpr (std::same_as<V, std::byte>) return s::fundamental_kind::byte;
+    else if constexpr (std::same_as<V, short>) return s::fundamental_kind::short_integer;
+    else if constexpr (std::same_as<V, unsigned short>) return s::fundamental_kind::unsigned_short_integer;
+    else if constexpr (std::same_as<V, int>) return s::fundamental_kind::int_integer;
+    else if constexpr (std::same_as<V, unsigned int>) return s::fundamental_kind::unsigned_int_integer;
+    else if constexpr (std::same_as<V, long>) return s::fundamental_kind::long_integer;
+    else if constexpr (std::same_as<V, unsigned long>) return s::fundamental_kind::unsigned_long_integer;
+    else if constexpr (std::same_as<V, long long>) return s::fundamental_kind::long_long_integer;
+    else if constexpr (std::same_as<V, unsigned long long>) return s::fundamental_kind::unsigned_long_long_integer;
+    else if constexpr (std::same_as<V, char>) return s::fundamental_kind::character;
+    else if constexpr (std::same_as<V, signed char>) return s::fundamental_kind::signed_character;
+    else if constexpr (std::same_as<V, unsigned char>) return s::fundamental_kind::unsigned_character;
+    else if constexpr (std::same_as<V, wchar_t>) return s::fundamental_kind::wide_character;
+    else if constexpr (std::same_as<V, char8_t>) return s::fundamental_kind::char8;
+    else if constexpr (std::same_as<V, char16_t>) return s::fundamental_kind::char16;
+    else if constexpr (std::same_as<V, char32_t>) return s::fundamental_kind::char32;
+    else if constexpr (std::same_as<V, float>) return s::fundamental_kind::float_32;
+    else if constexpr (std::same_as<V, double>) return s::fundamental_kind::float_64;
+    else if constexpr (std::same_as<V, long double>) return s::fundamental_kind::float_128;
+}
+
+// Shorthand constants used in static_asserts below
+inline constexpr auto k_int32   = expected_kind_for<std::int32_t>();
+inline constexpr auto k_int8    = expected_kind_for<std::int8_t>();
+inline constexpr auto k_int16   = expected_kind_for<std::int16_t>();
+inline constexpr auto k_int64   = expected_kind_for<std::int64_t>();
+inline constexpr auto k_int     = expected_kind_for<int>();
+inline constexpr auto k_long    = expected_kind_for<long>();
+inline constexpr auto k_llong   = expected_kind_for<long long>();
+inline constexpr auto k_short   = expected_kind_for<short>();
+inline constexpr auto k_ptrdiff = expected_kind_for<std::ptrdiff_t>();
+inline constexpr auto k_intmax  = expected_kind_for<std::intmax_t>();
+inline constexpr auto k_intptr  = expected_kind_for<std::intptr_t>();
+inline constexpr auto k_uint32  = expected_kind_for<std::uint32_t>();
+inline constexpr auto k_uint8   = expected_kind_for<std::uint8_t>();
+inline constexpr auto k_uint16  = expected_kind_for<std::uint16_t>();
+inline constexpr auto k_uint64  = expected_kind_for<std::uint64_t>();
+inline constexpr auto k_uint    = expected_kind_for<unsigned int>();
+inline constexpr auto k_ulong   = expected_kind_for<unsigned long>();
+inline constexpr auto k_ullong  = expected_kind_for<unsigned long long>();
+inline constexpr auto k_ushort  = expected_kind_for<unsigned short>();
+inline constexpr auto k_size    = expected_kind_for<std::size_t>();
+inline constexpr auto k_uintmax = expected_kind_for<std::uintmax_t>();
+inline constexpr auto k_uintptr = expected_kind_for<std::uintptr_t>();
+
 // -- Test structs -----------------------------------------------------------
 
 struct point {
@@ -169,114 +242,114 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::int32_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int32);
     }
     {
         constexpr auto node = mu::make_schema(mu::int8_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int8);
     }
     {
         constexpr auto node = mu::make_schema(mu::int16_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int16);
     }
     {
         constexpr auto node = mu::make_schema(mu::int64_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int64);
     }
     {
         constexpr auto node = mu::make_schema(mu::int_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int);
     }
     {
         constexpr auto node = mu::make_schema(mu::long_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_long);
     }
     {
         constexpr auto node = mu::make_schema(mu::long_long_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_llong);
     }
     {
         constexpr auto node = mu::make_schema(mu::short_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_short);
     }
     {
         constexpr auto node = mu::make_schema(mu::ptrdiff_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_ptrdiff);
     }
     {
         constexpr auto node = mu::make_schema(mu::intmax_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_intmax);
     }
     {
         constexpr auto node = mu::make_schema(mu::intptr_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_intptr);
     }
 
     // -- 1b: unsigned integers -------------------------------------------
     {
         constexpr auto node = mu::make_schema(mu::uint32_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uint32);
     }
     {
         constexpr auto node = mu::make_schema(mu::uint8_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uint8);
     }
     {
         constexpr auto node = mu::make_schema(mu::uint16_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uint16);
     }
     {
         constexpr auto node = mu::make_schema(mu::uint64_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uint64);
     }
     {
         constexpr auto node = mu::make_schema(mu::unsigned_int_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uint);
     }
     {
         constexpr auto node = mu::make_schema(mu::unsigned_long_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_ulong);
     }
     {
         constexpr auto node = mu::make_schema(mu::unsigned_long_long_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_ullong);
     }
     {
         constexpr auto node = mu::make_schema(mu::unsigned_short_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_ushort);
     }
     {
         constexpr auto node = mu::make_schema(mu::size_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_size);
     }
     {
         constexpr auto node = mu::make_schema(mu::uintmax_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uintmax);
     }
     {
         constexpr auto node = mu::make_schema(mu::uintptr_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == k_uintptr);
     }
 
     // -- 1c: floating point ----------------------------------------------
@@ -337,21 +410,21 @@ int main() {
         static_assert(decltype(node)::kind == s::primitive_kind::monostate);
     }
 
-    // -- 1g: char types map to signed/unsigned integer --------------------
+    // -- 1g: char types map to their exact kinds ----------------------------
     {
         constexpr auto node = mu::make_schema(mu::char8_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == s::primitive_kind::char8);
     }
     {
         constexpr auto node = mu::make_schema(mu::char16_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == s::primitive_kind::char16);
     }
     {
         constexpr auto node = mu::make_schema(mu::char32_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == s::primitive_kind::char32);
     }
     {
         // char signedness is implementation-defined; just confirm it's a primitive
@@ -361,25 +434,24 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::signed_char_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == expected_kind_for<signed char>());
     }
     {
         constexpr auto node = mu::make_schema(mu::unsigned_char_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == expected_kind_for<unsigned char>());
     }
     {
         constexpr auto node = mu::make_schema(mu::wchar_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
         static_assert(
-            decltype(node)::kind == s::fundamental_kind::signed_integer ||
-            decltype(node)::kind == s::fundamental_kind::unsigned_integer
+            decltype(node)::kind == s::fundamental_kind::wide_character
         );
     }
     {
         constexpr auto node = mu::make_schema(mu::byte_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::fundamental_kind::unsigned_integer);
+        static_assert(decltype(node)::kind == s::fundamental_kind::byte);
     }
 
     // =====================================================================
@@ -391,7 +463,7 @@ int main() {
         constexpr auto node = mu::make_schema(mu::optional_codec(mu::int32_codec));
         static_assert(s::is_optional_v<decltype(node)>);
         static_assert(s::is_primitive_v<decltype(node.inner)>);
-        static_assert(decltype(node.inner)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.inner)::kind == k_int32);
     }
     // -- 2b: optional<string> --------------------------------------------
     {
@@ -415,7 +487,7 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::optional_codec(mu::uint64_codec));
         static_assert(s::is_optional_v<decltype(node)>);
-        static_assert(decltype(node.inner)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(node.inner)::kind == k_uint64);
     }
 
     // =====================================================================
@@ -427,7 +499,7 @@ int main() {
         constexpr auto node = mu::make_schema(mu::vector_of(mu::int32_codec));
         static_assert(s::is_array_v<decltype(node)>);
         static_assert(s::is_primitive_v<decltype(node.element)>);
-        static_assert(decltype(node.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.element)::kind == k_int32);
     }
     // -- 3b: vector<string> ----------------------------------------------
     {
@@ -452,7 +524,7 @@ int main() {
         constexpr auto node = mu::make_schema(mu::array_of<3>(mu::int32_codec));
         static_assert(s::is_array_v<decltype(node)>);
         static_assert(s::is_primitive_v<decltype(node.element)>);
-        static_assert(decltype(node.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.element)::kind == k_int32);
     }
     // -- 3f: fixed-size array_of<5>(string_codec) ------------------------
     {
@@ -472,14 +544,14 @@ int main() {
         static_assert(s::is_array_v<decltype(node)>);
         static_assert(s::is_array_v<decltype(node.element)>);
         static_assert(s::is_primitive_v<decltype(node.element.element)>);
-        static_assert(decltype(node.element.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.element.element)::kind == k_int32);
     }
     // -- 3i: vector<optional<int32_t>> -----------------------------------
     {
         constexpr auto node = mu::make_schema(mu::vector_of(mu::optional_codec(mu::int32_codec)));
         static_assert(s::is_array_v<decltype(node)>);
         static_assert(s::is_optional_v<decltype(node.element)>);
-        static_assert(decltype(node.element.inner)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.element.inner)::kind == k_int32);
     }
     // -- 3j: vector of objects (vector<person>) --------------------------
     {
@@ -503,7 +575,7 @@ int main() {
         static_assert(std::get<0>(node.fields).name == "x");
         static_assert(std::get<0>(node.fields).required);
         static_assert(s::is_primitive_v<decltype(std::get<0>(node.fields).schema)>);
-        static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(std::get<0>(node.fields).schema)::kind == k_int);
         static_assert(std::get<1>(node.fields).name == "y");
         static_assert(std::get<1>(node.fields).required);
     }
@@ -513,7 +585,7 @@ int main() {
         static_assert(s::is_object_v<decltype(node)>);
         static_assert(s::field_count_v<decltype(node)> == 2);
         static_assert(std::get<0>(node.fields).name == "age");
-        static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(std::get<0>(node.fields).schema)::kind == k_int);
         static_assert(std::get<1>(node.fields).name == "name");
         static_assert(decltype(std::get<1>(node.fields).schema)::kind == s::primitive_kind::string);
     }
@@ -579,8 +651,8 @@ int main() {
         static_assert(std::get<1>(node.fields).name == "g");
         static_assert(std::get<2>(node.fields).name == "b");
         static_assert(std::get<3>(node.fields).name == "a");
-        static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::unsigned_integer);
-        static_assert(decltype(std::get<3>(node.fields).schema)::kind == s::primitive_kind::unsigned_integer);
+        static_assert(decltype(std::get<0>(node.fields).schema)::kind == k_uint8);
+        static_assert(decltype(std::get<3>(node.fields).schema)::kind == k_uint8);
     }
     // -- 4g: config (int32 + string + bool + double) ---------------------
     {
@@ -588,7 +660,7 @@ int main() {
         static_assert(s::is_object_v<decltype(node)>);
         static_assert(s::field_count_v<decltype(node)> == 4);
         static_assert(std::get<0>(node.fields).name == "port");
-        static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(std::get<0>(node.fields).schema)::kind == k_int32);
         static_assert(std::get<1>(node.fields).name == "host");
         static_assert(decltype(std::get<1>(node.fields).schema)::kind == s::primitive_kind::string);
         static_assert(std::get<2>(node.fields).name == "verbose");
@@ -636,7 +708,7 @@ int main() {
         static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::string);
         static_assert(std::get<1>(node.fields).name == "values");
         static_assert(s::is_array_v<decltype(std::get<1>(node.fields).schema)>);
-        static_assert(decltype(std::get<1>(node.fields).schema.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(std::get<1>(node.fields).schema.element)::kind == k_int32);
     }
     // -- 4l: object with or_else field (transparent pass-through) --------
     {
@@ -647,7 +719,7 @@ int main() {
         static_assert(std::get<0>(node.fields).required);
         // or_else + constrained passes through to the underlying int32 schema
         static_assert(s::is_primitive_v<decltype(std::get<0>(node.fields).schema)>);
-        static_assert(decltype(std::get<0>(node.fields).schema)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(std::get<0>(node.fields).schema)::kind == k_int32);
         static_assert(std::get<1>(node.fields).name == "name");
     }
     // -- 4m: deeply nested -- nested_teams (league + vector<team>) ------
@@ -682,7 +754,7 @@ int main() {
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_tuple_v<decltype(node)>);
         static_assert(s::element_count_v<decltype(node)> == 3);
-        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == s::primitive_kind::signed_integer);
+        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == k_int32);
         static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == s::primitive_kind::float_32);
         static_assert(std::remove_cvref_t<decltype(std::get<2>(node.elements))>::kind == s::primitive_kind::boolean);
     }
@@ -711,8 +783,8 @@ int main() {
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_tuple_v<decltype(node)>);
         static_assert(s::element_count_v<decltype(node)> == 6);
-        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == s::primitive_kind::signed_integer);
-        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == s::primitive_kind::unsigned_integer);
+        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == k_int32);
+        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == k_uint32);
         static_assert(std::remove_cvref_t<decltype(std::get<2>(node.elements))>::kind == s::primitive_kind::float_32);
         static_assert(std::remove_cvref_t<decltype(std::get<3>(node.elements))>::kind == s::primitive_kind::boolean);
         static_assert(std::remove_cvref_t<decltype(std::get<4>(node.elements))>::kind == s::primitive_kind::string);
@@ -741,7 +813,7 @@ int main() {
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_variant_v<decltype(node)>);
         static_assert(s::alternative_count_v<decltype(node)> == 2);
-        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.alternatives))>::kind == s::primitive_kind::signed_integer);
+        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.alternatives))>::kind == k_int32);
         static_assert(std::remove_cvref_t<decltype(std::get<1>(node.alternatives))>::kind == s::primitive_kind::string);
     }
     // -- 6b: variant<int32, bool, string> (3 alternatives) ---------------
@@ -750,7 +822,7 @@ int main() {
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_variant_v<decltype(node)>);
         static_assert(s::alternative_count_v<decltype(node)> == 3);
-        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.alternatives))>::kind == s::primitive_kind::signed_integer);
+        static_assert(std::remove_cvref_t<decltype(std::get<0>(node.alternatives))>::kind == k_int32);
         static_assert(std::remove_cvref_t<decltype(std::get<1>(node.alternatives))>::kind == s::primitive_kind::boolean);
         static_assert(std::remove_cvref_t<decltype(std::get<2>(node.alternatives))>::kind == s::primitive_kind::string);
     }
@@ -761,7 +833,7 @@ int main() {
         static_assert(s::is_variant_v<decltype(node)>);
         static_assert(s::alternative_count_v<decltype(node)> == 2);
         static_assert(std::remove_cvref_t<decltype(std::get<0>(node.alternatives))>::kind == s::primitive_kind::monostate);
-        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.alternatives))>::kind == s::primitive_kind::signed_integer);
+        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.alternatives))>::kind == k_int32);
     }
     // -- 6d: variant containing objects ----------------------------------
     {
@@ -808,7 +880,7 @@ int main() {
         constexpr auto codec = mu::int32_codec.constrain([](int32_t v) { return v > 0; });
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int32);
     }
     // -- 7b: constrained string ------------------------------------------
     {
@@ -833,7 +905,7 @@ int main() {
             .or_else([] { return int32_t{1}; });
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node)::kind == k_int32);
     }
     // -- 7e: or_else on string (standalone) ------------------------------
     {
@@ -849,7 +921,7 @@ int main() {
             [](const std::vector<int32_t>& v) { return v.size() <= 100; });
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_array_v<decltype(node)>);
-        static_assert(decltype(node.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.element)::kind == k_int32);
     }
     // -- 7g: constrained optional ----------------------------------------
     {
@@ -857,7 +929,7 @@ int main() {
             [](const std::optional<int32_t>& v) { return true; });
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_optional_v<decltype(node)>);
-        static_assert(decltype(node.inner)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.inner)::kind == k_int32);
     }
 
     // =====================================================================
@@ -869,7 +941,7 @@ int main() {
         constexpr auto node = mu::make_schema(mu::optional_codec(mu::vector_of(mu::int32_codec)));
         static_assert(s::is_optional_v<decltype(node)>);
         static_assert(s::is_array_v<decltype(node.inner)>);
-        static_assert(decltype(node.inner.element)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.inner.element)::kind == k_int32);
     }
     // -- 8b: optional of object ------------------------------------------
     {
@@ -943,7 +1015,7 @@ int main() {
             mu::optional_codec(mu::optional_codec(mu::int32_codec)));
         static_assert(s::is_optional_v<decltype(node)>);
         static_assert(s::is_optional_v<decltype(node.inner)>);
-        static_assert(decltype(node.inner.inner)::kind == s::primitive_kind::signed_integer);
+        static_assert(decltype(node.inner.inner)::kind == k_int32);
     }
 #endif
 

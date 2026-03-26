@@ -70,33 +70,33 @@ int main() {
     // 1. Primitive codec from schema -- round-trip
     // =====================================================================
 
-    // -- 1a: signed_integer -> int64_codec
+    // -- 1a: int32 -> int32_codec
     {
         constexpr auto schema = mu::make_schema(mu::int32_codec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, std::int64_t{42});
+        auto bytes = to_bytes(fmt, std::int32_t{42});
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == 42);
     }
-    // -- 1b: negative signed_integer
+    // -- 1b: negative int32
     {
         constexpr auto schema = mu::make_schema(mu::int32_codec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, std::int64_t{-999});
+        auto bytes = to_bytes(fmt, std::int32_t{-999});
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == -999);
     }
-    // -- 1c: unsigned_integer -> uint64_codec
+    // -- 1c: uint32 -> uint32_codec
     {
         constexpr auto schema = mu::make_schema(mu::uint32_codec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, std::uint64_t{999});
+        auto bytes = to_bytes(fmt, std::uint32_t{999});
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == 999u);
     }
@@ -145,23 +145,23 @@ int main() {
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
     }
-    // -- 1h: int8 schema -> int64 round-trip
+    // -- 1h: int8 schema -> int8_codec round-trip
     {
         constexpr auto schema = mu::make_schema(mu::int8_codec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, std::int64_t{-128});
+        auto bytes = to_bytes(fmt, std::int8_t{-128});
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == -128);
     }
-    // -- 1i: uint8 schema -> uint64 round-trip
+    // -- 1i: uint8 schema -> uint8_codec round-trip
     {
         constexpr auto schema = mu::make_schema(mu::uint8_codec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        auto bytes = to_bytes(fmt, std::uint64_t{255});
+        auto bytes = to_bytes(fmt, std::uint8_t{255});
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == 255u);
     }
@@ -198,14 +198,14 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{10}, std::int64_t{20}};
+        val_t value{10, 20};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
         assert(std::get<0>(*d) == 10);
         assert(std::get<1>(*d) == 20);
     }
-    // -- 2b: person schema -> named tuple with int64 + string
+    // -- 2b: person schema -> named tuple with int + string
     {
         constexpr auto schema = mu::make_schema(person::codec);
         constexpr auto codec = mu::make_codec(schema);
@@ -213,7 +213,7 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{30}, std::string{"Alice"}};
+        val_t value{30, std::string{"Alice"}};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
@@ -228,7 +228,7 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{-100}, std::int64_t{-200}};
+        val_t value{-100, -200};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
@@ -243,7 +243,7 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{0}, std::int64_t{0}};
+        val_t value{0, 0};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
@@ -255,13 +255,13 @@ int main() {
     // 3. Array codec from schema
     // =====================================================================
 
-    // -- 3a: vector<int> schema -> vector_of(int64_codec)
+    // -- 3a: vector<int32> schema -> vector_of(int32_codec)
     {
         constexpr auto schema = mu::make_schema(mu::vector_of(mu::int32_codec));
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::vector<std::int64_t> value = {1, 2, 3};
+        std::vector<std::int32_t> value = {1, 2, 3};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d && d->size() == 3);
@@ -273,7 +273,7 @@ int main() {
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::vector<std::int64_t> value = {};
+        std::vector<std::int32_t> value = {};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d && d->empty());
@@ -329,24 +329,24 @@ int main() {
         auto d = from_bytes(fmt, bytes);
         assert(d && !d->has_value());
     }
-    // -- 4c: optional<int64> present
+    // -- 4c: optional<int32> present
     {
         constexpr auto schema = mu::make_schema(mu::optional_codec(mu::int32_codec));
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::optional<std::int64_t> present{42};
+        std::optional<std::int32_t> present{42};
         auto bytes = to_bytes(fmt, present);
         auto d = from_bytes(fmt, bytes);
         assert(d && d->has_value() && **d == 42);
     }
-    // -- 4d: optional<int64> absent
+    // -- 4d: optional<int32> absent
     {
         constexpr auto schema = mu::make_schema(mu::optional_codec(mu::int32_codec));
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::optional<std::int64_t> absent;
+        std::optional<std::int32_t> absent;
         auto bytes = to_bytes(fmt, absent);
         auto d = from_bytes(fmt, bytes);
         assert(d && !d->has_value());
@@ -356,7 +356,7 @@ int main() {
     // 5. Tuple codec from schema (positional)
     // =====================================================================
 
-    // -- 5a: tuple<int64, float, bool>
+    // -- 5a: tuple<int32, float, bool>
     {
         constexpr auto origCodec = mu::tuple_codec(mu::int32_codec, mu::float_codec, mu::bool_codec);
         constexpr auto schema = mu::make_schema(origCodec);
@@ -365,7 +365,7 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::int64_t{7}, 2.5f, true};
+        val_t value{std::int32_t{7}, 2.5f, true};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
@@ -373,7 +373,7 @@ int main() {
         assert(std::get<1>(*d) == 2.5f);
         assert(std::get<2>(*d) == true);
     }
-    // -- 5b: tuple<string, uint64> (string before int tests sequential stream consumption)
+    // -- 5b: tuple<string, uint32> (string before int tests sequential stream consumption)
     {
         constexpr auto origCodec = mu::tuple_codec(mu::string_codec, mu::uint32_codec);
         constexpr auto schema = mu::make_schema(origCodec);
@@ -382,7 +382,7 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t value{std::string{"test"}, std::uint64_t{123}};
+        val_t value{std::string{"test"}, std::uint32_t{123}};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
@@ -394,7 +394,7 @@ int main() {
     // 6. Variant codec from schema
     // =====================================================================
 
-    // -- 6a: variant<int64, string> - int alternative
+    // -- 6a: variant<int32, string> - int alternative
     {
         constexpr auto origCodec = mu::variant_codec(mu::int32_codec, mu::string_codec);
         constexpr auto schema = mu::make_schema(origCodec);
@@ -403,14 +403,14 @@ int main() {
         using val_t = typename std::decay_t<decltype(codec)>::value_type;
         auto fmt = mu::make_binary_format<char>(codec);
 
-        val_t v1 = std::int64_t{42};
+        val_t v1 = std::int32_t{42};
         auto bytes = to_bytes(fmt, v1);
         auto d = from_bytes(fmt, bytes);
         assert(d.has_value());
         assert(d->index() == 0);
         assert(std::get<0>(*d) == 42);
     }
-    // -- 6b: variant<int64, string> - string alternative
+    // -- 6b: variant<int32, string> - string alternative
     {
         constexpr auto origCodec = mu::variant_codec(mu::int32_codec, mu::string_codec);
         constexpr auto schema = mu::make_schema(origCodec);
@@ -491,14 +491,14 @@ int main() {
     // 8. Nested compositions
     // =====================================================================
 
-    // -- 8a: vector<optional<int64>>
+    // -- 8a: vector<optional<int32>>
     {
         constexpr auto origCodec = mu::vector_of(mu::optional_codec(mu::int32_codec));
         constexpr auto schema = mu::make_schema(origCodec);
         constexpr auto codec = mu::make_codec(schema);
         auto fmt = mu::make_binary_format<char>(codec);
 
-        std::vector<std::optional<std::int64_t>> value = {1, std::nullopt, 3};
+        std::vector<std::optional<std::int32_t>> value = {1, std::nullopt, 3};
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
         assert(d && d->size() == 3);
@@ -515,8 +515,8 @@ int main() {
         auto fmt = mu::make_binary_format<char>(codec);
 
         std::vector<inner_t> value = {
-            inner_t{std::int64_t{1}, std::int64_t{2}},
-            inner_t{std::int64_t{3}, std::int64_t{4}}
+            inner_t{1, 2},
+            inner_t{3, 4}
         };
         auto bytes = to_bytes(fmt, value);
         auto d = from_bytes(fmt, bytes);
