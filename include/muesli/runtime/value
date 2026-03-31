@@ -1,0 +1,204 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <variant>
+#include <vector>
+
+namespace muesli::runtime {
+
+/**
+ * @brief Forward declaration of the recursive value node.
+ */
+struct value_node;
+
+/**
+ * @brief Owning pointer to a value_node.
+ */
+using value_node_ptr = std::unique_ptr<value_node>;
+
+/**
+ * @brief Raw bytes for a fundamental (fixed-size) value.
+ *
+ * The byte vector length always matches the corresponding
+ * fundamental_schema::size.
+ */
+struct fundamental_value {
+    std::vector<std::byte> data;
+};
+
+/**
+ * @brief Ordered heterogeneous child values (tuple / pair).
+ */
+struct tuple_value {
+    std::vector<value_node_ptr> elements;
+};
+
+/**
+ * @brief Discriminated-union value (variant).
+ */
+struct variant_value {
+    std::size_t index;
+    value_node_ptr active;
+};
+
+/**
+ * @brief Homogeneous sequence of child values.
+ *
+ * Used for vector elements, array elements, and delimited-range elements.
+ * The semantic difference is captured by the schema; the value representation
+ * is identical.
+ */
+struct sequence_value {
+    std::vector<value_node_ptr> elements;
+};
+
+/**
+ * @brief Recursive type-erased value tree.
+ *
+ * Mirrors the schema_node variant tree. Each node holds data for exactly
+ * one schema node kind.
+ */
+struct value_node {
+    std::variant<
+        std::monostate,
+        fundamental_value,
+        tuple_value,
+        variant_value,
+        sequence_value
+    > data;
+
+    value_node() : data(std::monostate{}) {}
+
+    value_node(std::monostate) : data(std::monostate{}) {}
+    value_node(fundamental_value v) : data(std::move(v)) {}
+    value_node(tuple_value v) : data(std::move(v)) {}
+    value_node(variant_value v) : data(std::move(v)) {}
+    value_node(sequence_value v) : data(std::move(v)) {}
+
+    value_node(value_node&&) = default;
+    value_node& operator=(value_node&&) = default;
+
+    /** @brief Deep-copy constructor. */
+    value_node(const value_node& other);
+    /** @brief Deep-copy assignment. */
+    value_node& operator=(const value_node& other);
+
+    ~value_node() = default;
+
+    /** @brief Deep-equality comparison. */
+    bool operator==(const value_node& other) const noexcept;
+    bool operator!=(const value_node& other) const noexcept { return !(*this == other); }
+};
+
+// -------------------------------------------------------------------------
+//  Factory helpers
+// -------------------------------------------------------------------------
+
+/** @brief Box a value_node on the heap. */
+inline value_node_ptr make_value(value_node v) {
+    return std::make_unique<value_node>(std::move(v));
+}
+
+/** @brief Create a fundamental value from raw bytes. */
+inline value_node make_fundamental(std::vector<std::byte> bytes) {
+    return value_node{fundamental_value{std::move(bytes)}};
+}
+
+/** @brief Create a fundamental value from a trivially-copyable object. */
+template<typename T>
+    requires std::is_trivially_copyable_v<T>
+value_node make_fundamental_from(const T& v) {
+    auto ptr = reinterpret_cast<const std::byte*>(&v);
+    return value_node{fundamental_value{{ptr, ptr + sizeof(T)}}};
+}
+
+// -------------------------------------------------------------------------
+//  Inline implementations
+// -------------------------------------------------------------------------
+
+namespace detail {
+
+    inline value_node_ptr clone_ptr(const value_node_ptr& p) {
+        return p ? std::make_unique<value_node>(*p) : nullptr;
+    }
+
+    inline std::vector<value_node_ptr> clone_vec(const std::vector<value_node_ptr>& v) {
+        std::vector<value_node_ptr> out;
+        out.reserve(v.size());
+        for (auto& p : v) out.push_back(clone_ptr(p));
+        return out;
+    }
+
+    inline bool eq_ptr(const value_node_ptr& a, const value_node_ptr& b) noexcept {
+        if (!a && !b) return true;
+        if (!a || !b) return false;
+        return *a == *b;
+    }
+
+    inline bool eq_vec(const std::vector<value_node_ptr>& a,
+                       const std::vector<value_node_ptr>& b) noexcept {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (!eq_ptr(a[i], b[i])) return false;
+        }
+        return true;
+    }
+
+} // namespace detail
+
+inline value_node::value_node(const value_node& other) {
+    std::visit([this](const auto& payload) {
+        using T = std::decay_t<decltype(payload)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            data = std::monostate{};
+        } else if constexpr (std::is_same_v<T, fundamental_value>) {
+            data = fundamental_value{payload.data};
+        } else if constexpr (std::is_same_v<T, tuple_value>) {
+            data = tuple_value{detail::clone_vec(payload.elements)};
+        } else if constexpr (std::is_same_v<T, variant_value>) {
+            data = variant_value{payload.index, detail::clone_ptr(payload.active)};
+        } else if constexpr (std::is_same_v<T, sequence_value>) {
+            data = sequence_value{detail::clone_vec(payload.elements)};
+        }
+    }, other.data);
+}
+
+inline value_node& value_node::operator=(const value_node& other) {
+    if (this != &other) {
+        value_node tmp(other);
+        data = std::move(tmp.data);
+    }
+    return *this;
+}
+
+inline bool value_node::operator==(const value_node& other) const noexcept {
+    if (data.index() != other.data.index()) return false;
+    return std::visit([&other](const auto& lhs) -> bool {
+        using T = std::decay_t<decltype(lhs)>;
+        const auto& rhs = std::get<T>(other.data);
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            return true;
+        } else if constexpr (std::is_same_v<T, fundamental_value>) {
+            return lhs.data == rhs.data;
+        } else if constexpr (std::is_same_v<T, tuple_value>) {
+            return detail::eq_vec(lhs.elements, rhs.elements);
+        } else if constexpr (std::is_same_v<T, variant_value>) {
+            return lhs.index == rhs.index && detail::eq_ptr(lhs.active, rhs.active);
+        } else if constexpr (std::is_same_v<T, sequence_value>) {
+            return detail::eq_vec(lhs.elements, rhs.elements);
+        } else {
+            return false;
+        }
+    }, data);
+}
+
+} // namespace muesli::runtime
+

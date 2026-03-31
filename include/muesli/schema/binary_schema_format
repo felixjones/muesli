@@ -1,0 +1,227 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/schema/types>
+
+#include <cstdint>
+#include <cstring>
+#include <optional>
+#include <vector>
+
+namespace muesli::schema {
+
+/**
+ * @brief Serializes a schema_node tree to a compact byte vector.
+ *
+ * Wire format (recursive, self-describing):
+ *   tag:uint8
+ *   payload (tag-dependent, see schema_tag enum)
+ *
+ * All multi-byte integers are machine-endian (v1 assumption).
+ *
+ * @param node The root schema node.
+ * @return A byte vector containing the serialized schema.
+ */
+inline std::vector<std::byte> serialize_schema(const schema_node& node) {
+    std::vector<std::byte> out;
+
+    auto push_u8 = [&](std::uint8_t v) {
+        out.push_back(static_cast<std::byte>(v));
+    };
+    auto push_u16 = [&](std::uint16_t v) {
+        const auto* p = reinterpret_cast<const std::byte*>(&v);
+        out.insert(out.end(), p, p + sizeof(v));
+    };
+    auto push_u32 = [&](std::uint32_t v) {
+        const auto* p = reinterpret_cast<const std::byte*>(&v);
+        out.insert(out.end(), p, p + sizeof(v));
+    };
+
+    // Recursive lambda
+    auto serialize_impl = [&](const schema_node& n, auto& self) -> void {
+        std::visit([&](const auto& payload) {
+            using T = std::decay_t<decltype(payload)>;
+
+            if constexpr (std::is_same_v<T, monostate_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::monostate));
+            }
+            else if constexpr (std::is_same_v<T, fundamental_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::fundamental));
+                push_u8(payload.size);
+                push_u8(payload.alignment);
+            }
+            else if constexpr (std::is_same_v<T, tuple_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::tuple));
+                push_u16(static_cast<std::uint16_t>(payload.elements.size()));
+                for (auto& e : payload.elements) self(*e, self);
+            }
+            else if constexpr (std::is_same_v<T, variant_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::variant));
+                push_u16(static_cast<std::uint16_t>(payload.alternatives.size()));
+                push_u8(payload.index_bytes);
+                for (auto& a : payload.alternatives) self(*a, self);
+            }
+            else if constexpr (std::is_same_v<T, vector_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::vector));
+                push_u8(payload.size_bytes);
+                push_u8(payload.size_alignment);
+                self(*payload.element, self);
+            }
+            else if constexpr (std::is_same_v<T, array_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::array));
+                push_u32(payload.count);
+                self(*payload.element, self);
+            }
+            else if constexpr (std::is_same_v<T, delimited_schema>) {
+                push_u8(static_cast<std::uint8_t>(schema_tag::delimited));
+                push_u8(payload.delimiter_mask);
+                push_u8(payload.delimiter_expected);
+                self(*payload.element, self);
+            }
+        }, n.data);
+    };
+
+    serialize_impl(node, serialize_impl);
+    return out;
+}
+
+/**
+ * @brief Deserializes a schema_node tree from a byte span.
+ *
+ * @param bytes Pointer to the byte buffer.
+ * @param len   Length of the buffer.
+ * @return The deserialized schema_node, or std::nullopt on malformed input.
+ */
+inline std::optional<schema_node> deserialize_schema(const std::byte* bytes, std::size_t len) {
+    std::size_t pos = 0;
+
+    auto remaining = [&]() -> std::size_t { return pos < len ? len - pos : 0; };
+
+    auto read_u8 = [&]() -> std::optional<std::uint8_t> {
+        if (remaining() < 1) return std::nullopt;
+        auto v = static_cast<std::uint8_t>(bytes[pos++]);
+        return v;
+    };
+    auto read_u16 = [&]() -> std::optional<std::uint16_t> {
+        if (remaining() < sizeof(std::uint16_t)) return std::nullopt;
+        std::uint16_t v;
+        std::memcpy(&v, bytes + pos, sizeof(v));
+        pos += sizeof(v);
+        return v;
+    };
+    auto read_u32 = [&]() -> std::optional<std::uint32_t> {
+        if (remaining() < sizeof(std::uint32_t)) return std::nullopt;
+        std::uint32_t v;
+        std::memcpy(&v, bytes + pos, sizeof(v));
+        pos += sizeof(v);
+        return v;
+    };
+
+    // Recursive lambda
+    auto deserialize_impl = [&](auto& self) -> std::optional<schema_node> {
+        auto tag_byte = read_u8();
+        if (!tag_byte) return std::nullopt;
+        auto tag = static_cast<schema_tag>(*tag_byte);
+
+        switch (tag) {
+        case schema_tag::monostate:
+            return schema_node{monostate_schema{}};
+
+        case schema_tag::fundamental: {
+            auto size = read_u8();
+            auto alignment = read_u8();
+            if (!size || !alignment) return std::nullopt;
+            return schema_node{fundamental_schema{*size, *alignment}};
+        }
+
+        case schema_tag::tuple: {
+            auto count = read_u16();
+            if (!count) return std::nullopt;
+            tuple_schema ts;
+            ts.elements.reserve(*count);
+            for (std::uint16_t i = 0; i < *count; ++i) {
+                auto child = self(self);
+                if (!child) return std::nullopt;
+                ts.elements.push_back(make_node(std::move(*child)));
+            }
+            return schema_node{std::move(ts)};
+        }
+
+        case schema_tag::variant: {
+            auto count = read_u16();
+            auto index_bytes = read_u8();
+            if (!count || !index_bytes) return std::nullopt;
+            variant_schema vs;
+            vs.index_bytes = *index_bytes;
+            vs.alternatives.reserve(*count);
+            for (std::uint16_t i = 0; i < *count; ++i) {
+                auto child = self(self);
+                if (!child) return std::nullopt;
+                vs.alternatives.push_back(make_node(std::move(*child)));
+            }
+            return schema_node{std::move(vs)};
+        }
+
+        case schema_tag::vector: {
+            auto size_bytes = read_u8();
+            auto size_alignment = read_u8();
+            if (!size_bytes || !size_alignment) return std::nullopt;
+            auto elem = self(self);
+            if (!elem) return std::nullopt;
+            vector_schema vs;
+            vs.size_bytes = *size_bytes;
+            vs.size_alignment = *size_alignment;
+            vs.element = make_node(std::move(*elem));
+            return schema_node{std::move(vs)};
+        }
+
+        case schema_tag::array: {
+            auto count = read_u32();
+            if (!count) return std::nullopt;
+            auto elem = self(self);
+            if (!elem) return std::nullopt;
+            array_schema as;
+            as.count = *count;
+            as.element = make_node(std::move(*elem));
+            return schema_node{std::move(as)};
+        }
+
+        case schema_tag::delimited: {
+            auto mask = read_u8();
+            auto expected = read_u8();
+            if (!mask || !expected) return std::nullopt;
+            auto elem = self(self);
+            if (!elem) return std::nullopt;
+            delimited_schema ds;
+            ds.delimiter_mask = *mask;
+            ds.delimiter_expected = *expected;
+            ds.element = make_node(std::move(*elem));
+            return schema_node{std::move(ds)};
+        }
+
+        default:
+            return std::nullopt;
+        }
+    };
+
+    auto result = deserialize_impl(deserialize_impl);
+    if (!result) return std::nullopt;
+    // Ensure entire buffer was consumed
+    if (pos != len) return std::nullopt;
+    return result;
+}
+
+/**
+ * @brief Convenience overload accepting a std::vector<std::byte>.
+ */
+inline std::optional<schema_node> deserialize_schema(const std::vector<std::byte>& bytes) {
+    return deserialize_schema(bytes.data(), bytes.size());
+}
+
+} // namespace muesli::schema
+

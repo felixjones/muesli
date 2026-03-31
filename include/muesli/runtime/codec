@@ -1,0 +1,284 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/runtime/value>
+#include <muesli/schema/types>
+
+#include <array>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <optional>
+#include <ostream>
+#include <istream>
+#include <variant>
+
+namespace muesli::runtime {
+
+/**
+ * @brief Type-agnostic runtime codec that serializes/deserializes value_node
+ *        trees to/from byte streams according to a schema_node description.
+ *
+ * Produces bytes that are binary-compatible with muesli::binary_format when
+ * both operate on the same schema. Fluent wrappers (transform, constrain,
+ * etc.) are not supported -- they are lowered away during schema extraction.
+ */
+struct codec {
+    schema::schema_node schema;
+
+    explicit codec(schema::schema_node s) : schema(std::move(s)) {}
+
+    // -----------------------------------------------------------------
+    //  Serialize
+    // -----------------------------------------------------------------
+
+    /**
+     * @brief Serializes a value_node to an output stream.
+     * @return true on success, false on type mismatch.
+     */
+    bool serialize(const value_node& value, std::ostream& output) const {
+        return serialize_node(schema, value, output);
+    }
+
+    // -----------------------------------------------------------------
+    //  Deserialize
+    // -----------------------------------------------------------------
+
+    /**
+     * @brief Deserializes a value_node from an input stream.
+     * @return The deserialized value, or std::nullopt on stream/format error.
+     */
+    std::optional<value_node> deserialize(std::istream& input) const {
+        return deserialize_node(schema, input);
+    }
+
+private:
+    // =================================================================
+    //  Serialization helpers
+    // =================================================================
+
+    static void align_output(std::ostream& output, std::size_t alignment) {
+        if (alignment <= 1) return;
+        auto pos = static_cast<std::size_t>(output.tellp());
+        std::size_t padding = (alignment - (pos % alignment)) % alignment;
+        for (std::size_t i = 0; i < padding; ++i) {
+            char zero = 0;
+            output.write(&zero, 1);
+        }
+    }
+
+    static bool write_bytes(std::ostream& output, const std::byte* data, std::size_t len) {
+        output.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(len));
+        return output.good();
+    }
+
+    static bool write_index(std::ostream& output, std::size_t index,
+                            std::uint8_t index_bytes) {
+        align_output(output, index_bytes);
+        switch (index_bytes) {
+        case 1: { auto v = static_cast<std::uint8_t>(index);  return write_bytes(output, reinterpret_cast<const std::byte*>(&v), 1); }
+        case 2: { auto v = static_cast<std::uint16_t>(index); return write_bytes(output, reinterpret_cast<const std::byte*>(&v), 2); }
+        case 4: { auto v = static_cast<std::uint32_t>(index); return write_bytes(output, reinterpret_cast<const std::byte*>(&v), 4); }
+        case 8: { auto v = static_cast<std::uint64_t>(index); return write_bytes(output, reinterpret_cast<const std::byte*>(&v), 8); }
+        default: return false;
+        }
+    }
+
+    static bool serialize_node(const schema::schema_node& schema,
+                               const value_node& value,
+                               std::ostream& output) {
+        return std::visit([&](const auto& payload) -> bool {
+            using S = std::decay_t<decltype(payload)>;
+
+            if constexpr (std::is_same_v<S, schema::monostate_schema>) {
+                // 0 bytes -- nothing to write
+                return true;
+            }
+            else if constexpr (std::is_same_v<S, schema::fundamental_schema>) {
+                auto* fv = std::get_if<fundamental_value>(&value.data);
+                if (!fv || fv->data.size() != payload.size) return false;
+                align_output(output, payload.alignment);
+                return write_bytes(output, fv->data.data(), payload.size);
+            }
+            else if constexpr (std::is_same_v<S, schema::tuple_schema>) {
+                auto* tv = std::get_if<tuple_value>(&value.data);
+                if (!tv || tv->elements.size() != payload.elements.size()) return false;
+                for (std::size_t i = 0; i < payload.elements.size(); ++i) {
+                    if (!serialize_node(*payload.elements[i], *tv->elements[i], output))
+                        return false;
+                }
+                return true;
+            }
+            else if constexpr (std::is_same_v<S, schema::variant_schema>) {
+                auto* vv = std::get_if<variant_value>(&value.data);
+                if (!vv || vv->index >= payload.alternatives.size() || !vv->active)
+                    return false;
+                if (!write_index(output, vv->index, payload.index_bytes))
+                    return false;
+                return serialize_node(*payload.alternatives[vv->index], *vv->active, output);
+            }
+            else if constexpr (std::is_same_v<S, schema::vector_schema>) {
+                auto* sv = std::get_if<sequence_value>(&value.data);
+                if (!sv) return false;
+                // Write size prefix
+                std::size_t count = sv->elements.size();
+                align_output(output, payload.size_alignment);
+                if (!write_bytes(output, reinterpret_cast<const std::byte*>(&count),
+                                 payload.size_bytes))
+                    return false;
+                // Write elements
+                for (auto& elem : sv->elements) {
+                    if (!serialize_node(*payload.element, *elem, output))
+                        return false;
+                }
+                return true;
+            }
+            else if constexpr (std::is_same_v<S, schema::array_schema>) {
+                auto* sv = std::get_if<sequence_value>(&value.data);
+                if (!sv || sv->elements.size() != payload.count) return false;
+                for (auto& elem : sv->elements) {
+                    if (!serialize_node(*payload.element, *elem, output))
+                        return false;
+                }
+                return true;
+            }
+            else if constexpr (std::is_same_v<S, schema::delimited_schema>) {
+                auto* sv = std::get_if<sequence_value>(&value.data);
+                if (!sv || sv->elements.empty()) return false;
+                for (auto& elem : sv->elements) {
+                    if (!serialize_node(*payload.element, *elem, output))
+                        return false;
+                }
+                return true;
+            }
+            else {
+                return false;
+            }
+        }, schema.data);
+    }
+
+    // =================================================================
+    //  Deserialization helpers
+    // =================================================================
+
+    static void align_input(std::istream& input, std::size_t alignment) {
+        if (alignment <= 1) return;
+        auto rawPos = input.tellg();
+        if (rawPos == std::istream::pos_type(-1)) return;
+        auto pos = static_cast<std::size_t>(rawPos);
+        std::size_t padding = (alignment - (pos % alignment)) % alignment;
+        if (padding > 0) {
+            input.seekg(static_cast<std::streamoff>(pos + padding));
+        }
+    }
+
+    static std::optional<std::vector<std::byte>> read_bytes(std::istream& input,
+                                                            std::size_t count) {
+        std::vector<std::byte> buf(count);
+        input.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(count));
+        if (input.gcount() != static_cast<std::streamsize>(count)) return std::nullopt;
+        return buf;
+    }
+
+    static std::optional<std::size_t> read_index(std::istream& input,
+                                                  std::uint8_t index_bytes) {
+        align_input(input, index_bytes);
+        auto bytes = read_bytes(input, index_bytes);
+        if (!bytes) return std::nullopt;
+        std::size_t result = 0;
+        std::memcpy(&result, bytes->data(), index_bytes);
+        return result;
+    }
+
+    static bool check_delimiter(const value_node& elem,
+                                std::uint8_t mask, std::uint8_t expected) {
+        auto* fv = std::get_if<fundamental_value>(&elem.data);
+        if (!fv || fv->data.empty()) return false;
+        return (static_cast<std::uint8_t>(fv->data[0]) & mask) == expected;
+    }
+
+    static std::optional<value_node> deserialize_node(
+            const schema::schema_node& schema, std::istream& input) {
+        return std::visit([&](const auto& payload) -> std::optional<value_node> {
+            using S = std::decay_t<decltype(payload)>;
+
+            if constexpr (std::is_same_v<S, schema::monostate_schema>) {
+                return value_node{std::monostate{}};
+            }
+            else if constexpr (std::is_same_v<S, schema::fundamental_schema>) {
+                align_input(input, payload.alignment);
+                auto bytes = read_bytes(input, payload.size);
+                if (!bytes) return std::nullopt;
+                return value_node{fundamental_value{std::move(*bytes)}};
+            }
+            else if constexpr (std::is_same_v<S, schema::tuple_schema>) {
+                tuple_value tv;
+                tv.elements.reserve(payload.elements.size());
+                for (auto& elemSchema : payload.elements) {
+                    auto elem = deserialize_node(*elemSchema, input);
+                    if (!elem) return std::nullopt;
+                    tv.elements.push_back(make_value(std::move(*elem)));
+                }
+                return value_node{std::move(tv)};
+            }
+            else if constexpr (std::is_same_v<S, schema::variant_schema>) {
+                auto idx = read_index(input, payload.index_bytes);
+                if (!idx || *idx >= payload.alternatives.size()) return std::nullopt;
+                auto active = deserialize_node(*payload.alternatives[*idx], input);
+                if (!active) return std::nullopt;
+                return value_node{variant_value{*idx, make_value(std::move(*active))}};
+            }
+            else if constexpr (std::is_same_v<S, schema::vector_schema>) {
+                // Read size prefix
+                align_input(input, payload.size_alignment);
+                auto sizeBytes = read_bytes(input, payload.size_bytes);
+                if (!sizeBytes) return std::nullopt;
+                std::size_t count = 0;
+                std::memcpy(&count, sizeBytes->data(), payload.size_bytes);
+                // Read elements
+                sequence_value sv;
+                sv.elements.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) {
+                    auto elem = deserialize_node(*payload.element, input);
+                    if (!elem) return std::nullopt;
+                    sv.elements.push_back(make_value(std::move(*elem)));
+                }
+                return value_node{std::move(sv)};
+            }
+            else if constexpr (std::is_same_v<S, schema::array_schema>) {
+                sequence_value sv;
+                sv.elements.reserve(payload.count);
+                for (std::uint32_t i = 0; i < payload.count; ++i) {
+                    auto elem = deserialize_node(*payload.element, input);
+                    if (!elem) return std::nullopt;
+                    sv.elements.push_back(make_value(std::move(*elem)));
+                }
+                return value_node{std::move(sv)};
+            }
+            else if constexpr (std::is_same_v<S, schema::delimited_schema>) {
+                sequence_value sv;
+                while (true) {
+                    auto elem = deserialize_node(*payload.element, input);
+                    if (!elem) return std::nullopt;
+                    bool isDel = check_delimiter(*elem, payload.delimiter_mask,
+                                                 payload.delimiter_expected);
+                    sv.elements.push_back(make_value(std::move(*elem)));
+                    if (isDel) break;
+                }
+                return value_node{std::move(sv)};
+            }
+            else {
+                return std::nullopt;
+            }
+        }, schema.data);
+    }
+};
+
+} // namespace muesli::runtime
+
