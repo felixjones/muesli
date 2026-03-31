@@ -69,6 +69,9 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_tuple_codec tests/test_tuple_codec.cpp)
     add_test(NAME test_tuple_codec COMMAND test_tuple_codec)
 
+    add_muesli_test_exe(test_pair_codec_range_holder tests/test_pair_codec_range_holder.cpp)
+    add_test(NAME test_pair_codec_range_holder COMMAND test_pair_codec_range_holder)
+
     add_muesli_test_exe(test_variant_codec tests/test_variant_codec.cpp)
     add_test(NAME test_variant_codec COMMAND test_variant_codec)
 

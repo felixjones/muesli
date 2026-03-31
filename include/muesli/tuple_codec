@@ -16,6 +16,7 @@
 #include <muesli/util/type_traits>
 
 #include <tuple>
+#include <optional>
 
 namespace muesli {
 
@@ -129,12 +130,14 @@ private:
 
     template<std::size_t... Is>
     constexpr auto encode_impl(const value_type& value, std::index_sequence<Is...>) const noexcept {
-        return std::tuple(std::get<Is>(codecs).encode(std::get<Is>(value))...);
+        using result_type = std::tuple<std::decay_t<decltype(std::get<Is>(codecs).encode(std::get<Is>(value)))>...>;
+        return result_type(std::get<Is>(codecs).encode(std::get<Is>(value))...);
     }
 
     template<std::size_t... Is>
     constexpr auto encode_impl_move(value_type&& value, std::index_sequence<Is...>) const noexcept {
-        return std::tuple(std::get<Is>(codecs).encode(std::move(std::get<Is>(value)))...);
+        using result_type = std::tuple<std::decay_t<decltype(std::get<Is>(codecs).encode(std::move(std::get<Is>(value))))>...>;
+        return result_type(std::get<Is>(codecs).encode(std::move(std::get<Is>(value)))...);
     }
 
     template<std::size_t... Is>
@@ -202,7 +205,9 @@ struct pair_codec : fluent::optionable<pair_codec<Codec1, Codec2>>,
 
     /** @brief Encodes a pair by converting to tuple and delegating to tuple_codec */
     constexpr auto encode(const value_type& value) const noexcept {
-        return codec.encode(std::make_tuple(value.first, value.second));
+        auto first = copy_or_clone(value.first);
+        auto second = copy_or_clone(value.second);
+        return codec.encode(std::make_tuple(std::move(first), std::move(second)));
     }
 
     /** @brief Encodes a pair by converting to tuple and delegating to tuple_codec (rvalue overload) */
@@ -220,6 +225,35 @@ struct pair_codec : fluent::optionable<pair_codec<Codec1, Codec2>>,
     constexpr value_type decode(auto&& value) const {
         auto [first, second] = codec.decode(std::forward<decltype(value)>(value));
         return {std::move(first), std::move(second)};
+    }
+
+private:
+    template<typename T>
+    static auto copy_or_clone(const T& value) {
+        if constexpr (std::copy_constructible<T>) {
+            return T(value);
+        } else if constexpr (is_range_holder_v<T>) {
+            using iterator_type = typename T::iterator;
+            using element_type = typename T::value_type;
+            // Clone lazily by moving ownership into a generator-backed holder.
+            return T([source = std::move(const_cast<T&>(value)), it = iterator_type{}, end = iterator_type{},
+                      initialized = false]() mutable -> std::optional<element_type> {
+                if (!initialized) {
+                    it = source.begin();
+                    end = source.end();
+                    initialized = true;
+                }
+                if (it != end) {
+                    auto next = *it;
+                    ++it;
+                    return next;
+                }
+                return std::nullopt;
+            });
+        } else {
+            static_assert(sizeof(T) == 0,
+                          "pair_codec: const encode requires copyable member types or range_holder");
+        }
     }
 };
 
