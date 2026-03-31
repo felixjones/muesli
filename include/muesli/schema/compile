@@ -1,0 +1,35 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/schema/binary_schema_format>
+#include <muesli/schema/lowering>
+#include <muesli/schema/types>
+
+#include <cstddef>
+#include <optional>
+#include <vector>
+
+namespace muesli::schema {
+
+/**
+ * @brief Extracts the schema from a typed codec and serializes it to bytes.
+ *
+ * Convenience function combining build_schema() + serialize_schema().
+ *
+ * @tparam C A type satisfying the Codec concept.
+ * @param codec The typed codec instance.
+ * @return A byte vector containing the serialized binary schema.
+ */
+template<Codec C>
+std::vector<std::byte> compile(const C& codec) {
+    auto node = build_schema(codec);
+    return serialize_schema(node);
+}
+
+} // namespace muesli::schema
+

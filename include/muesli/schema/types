@@ -1,0 +1,271 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <variant>
+#include <vector>
+
+namespace muesli::schema {
+
+/**
+ * @brief Forward declaration of the recursive schema node.
+ */
+struct schema_node;
+
+/**
+ * @brief Owning pointer to a schema_node.
+ */
+using schema_node_ptr = std::unique_ptr<schema_node>;
+
+/**
+ * @brief Schema node for std::monostate (zero bytes on the wire).
+ */
+struct monostate_schema {};
+
+/**
+ * @brief Schema node for fundamental (fixed-size, aligned) types.
+ *
+ * Covers bool, char, int, float, double, and all fixed-width integer types.
+ * The runtime codec writes/reads exactly @c size bytes with @c alignment padding.
+ */
+struct fundamental_schema {
+    std::uint8_t size;      ///< sizeof(T) on the encoding platform
+    std::uint8_t alignment; ///< alignof(T) on the encoding platform
+};
+
+/**
+ * @brief Schema node for ordered heterogeneous sequences (tuples, pairs).
+ *
+ * Each child element is serialized in order. This is the lowered form of
+ * tuple_codec and pair_codec.
+ */
+struct tuple_schema {
+    std::vector<schema_node_ptr> elements;
+};
+
+/**
+ * @brief Schema node for discriminated unions (variants).
+ *
+ * A discriminant tag of @c index_bytes bytes is written first, followed by the
+ * active alternative. @c index_bytes is pre-computed during lowering to match
+ * binary_format's index-type selection logic exactly.
+ */
+struct variant_schema {
+    std::vector<schema_node_ptr> alternatives;
+    std::uint8_t index_bytes; ///< 1, 2, 4, or 8 (matches binary_format logic)
+};
+
+/**
+ * @brief Schema node for length-prefixed homogeneous sequences (vectors).
+ *
+ * Binary layout: [size_bytes of element count] [element] [element] ...
+ * @c size_bytes and @c size_alignment capture sizeof/alignof(std::size_t) on
+ * the encoding platform so the runtime codec reproduces identical framing.
+ */
+struct vector_schema {
+    schema_node_ptr element;
+    std::uint8_t size_bytes;     ///< sizeof(std::size_t) on encoding platform
+    std::uint8_t size_alignment; ///< alignof(std::size_t) on encoding platform
+};
+
+/**
+ * @brief Schema node for fixed-count homogeneous sequences (arrays).
+ *
+ * Binary layout: [element] * count (no size prefix).
+ */
+struct array_schema {
+    schema_node_ptr element;
+    std::uint32_t count;
+};
+
+/**
+ * @brief Schema node for delimiter-terminated homogeneous sequences.
+ *
+ * Used for null-terminated strings and varint byte sequences. Elements are
+ * read until one matches the delimiter condition:
+ *   (first_byte_of_element & delimiter_mask) == delimiter_expected
+ * The matching element IS included in the output.
+ */
+struct delimited_schema {
+    schema_node_ptr element;
+    std::uint8_t delimiter_mask;     ///< Bitmask applied to first byte
+    std::uint8_t delimiter_expected; ///< Expected value after masking
+};
+
+// -------------------------------------------------------------------------
+//  schema_node -- the recursive variant
+// -------------------------------------------------------------------------
+
+/**
+ * @brief Tag constants for binary schema wire format.
+ */
+enum class schema_tag : std::uint8_t {
+    monostate  = 0x00,
+    fundamental = 0x01,
+    tuple      = 0x02,
+    variant    = 0x03,
+    vector     = 0x04,
+    array      = 0x05,
+    delimited  = 0x06,
+};
+
+/**
+ * @brief Canonical schema IR node.
+ *
+ * A single recursive std::variant tree that describes the binary layout
+ * of a codec in terms of the native shapes that binary_format supports.
+ * Every wrapper codec (transform, apply, member, constrained, or_else,
+ * projector, optional) is lowered away before a schema_node is produced.
+ */
+struct schema_node {
+    std::variant<
+        monostate_schema,
+        fundamental_schema,
+        tuple_schema,
+        variant_schema,
+        vector_schema,
+        array_schema,
+        delimited_schema
+    > data;
+
+    /** @brief Default-constructs as monostate. */
+    schema_node() : data(monostate_schema{}) {}
+
+    schema_node(monostate_schema s) : data(std::move(s)) {}
+    schema_node(fundamental_schema s) : data(std::move(s)) {}
+    schema_node(tuple_schema s) : data(std::move(s)) {}
+    schema_node(variant_schema s) : data(std::move(s)) {}
+    schema_node(vector_schema s) : data(std::move(s)) {}
+    schema_node(array_schema s) : data(std::move(s)) {}
+    schema_node(delimited_schema s) : data(std::move(s)) {}
+
+    schema_node(schema_node&&) = default;
+    schema_node& operator=(schema_node&&) = default;
+
+    /** @brief Deep-copy constructor. */
+    schema_node(const schema_node& other);
+    /** @brief Deep-copy assignment. */
+    schema_node& operator=(const schema_node& other);
+
+    ~schema_node() = default;
+
+    /** @brief Deep-equality comparison. */
+    bool operator==(const schema_node& other) const noexcept;
+    bool operator!=(const schema_node& other) const noexcept { return !(*this == other); }
+};
+
+// -------------------------------------------------------------------------
+//  Factory helpers
+// -------------------------------------------------------------------------
+
+/** @brief Creates a heap-allocated schema_node from any schema payload type. */
+template<typename S>
+schema_node_ptr make_node(S s) {
+    return std::make_unique<schema_node>(std::move(s));
+}
+
+// -------------------------------------------------------------------------
+//  Inline implementations
+// -------------------------------------------------------------------------
+
+namespace detail {
+
+    inline schema_node_ptr clone_ptr(const schema_node_ptr& p) {
+        return p ? std::make_unique<schema_node>(*p) : nullptr;
+    }
+
+    inline std::vector<schema_node_ptr> clone_vec(const std::vector<schema_node_ptr>& v) {
+        std::vector<schema_node_ptr> out;
+        out.reserve(v.size());
+        for (auto& p : v) out.push_back(clone_ptr(p));
+        return out;
+    }
+
+    inline bool eq_ptr(const schema_node_ptr& a, const schema_node_ptr& b) noexcept {
+        if (!a && !b) return true;
+        if (!a || !b) return false;
+        return *a == *b;
+    }
+
+    inline bool eq_vec(const std::vector<schema_node_ptr>& a,
+                       const std::vector<schema_node_ptr>& b) noexcept {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (!eq_ptr(a[i], b[i])) return false;
+        }
+        return true;
+    }
+
+} // namespace detail
+
+inline schema_node::schema_node(const schema_node& other) {
+    std::visit([this](const auto& payload) {
+        using T = std::decay_t<decltype(payload)>;
+        if constexpr (std::is_same_v<T, monostate_schema>) {
+            data = monostate_schema{};
+        } else if constexpr (std::is_same_v<T, fundamental_schema>) {
+            data = payload;
+        } else if constexpr (std::is_same_v<T, tuple_schema>) {
+            data = tuple_schema{detail::clone_vec(payload.elements)};
+        } else if constexpr (std::is_same_v<T, variant_schema>) {
+            data = variant_schema{detail::clone_vec(payload.alternatives), payload.index_bytes};
+        } else if constexpr (std::is_same_v<T, vector_schema>) {
+            data = vector_schema{detail::clone_ptr(payload.element),
+                                 payload.size_bytes, payload.size_alignment};
+        } else if constexpr (std::is_same_v<T, array_schema>) {
+            data = array_schema{detail::clone_ptr(payload.element), payload.count};
+        } else if constexpr (std::is_same_v<T, delimited_schema>) {
+            data = delimited_schema{detail::clone_ptr(payload.element),
+                                    payload.delimiter_mask, payload.delimiter_expected};
+        }
+    }, other.data);
+}
+
+inline schema_node& schema_node::operator=(const schema_node& other) {
+    if (this != &other) {
+        schema_node tmp(other);
+        data = std::move(tmp.data);
+    }
+    return *this;
+}
+
+inline bool schema_node::operator==(const schema_node& other) const noexcept {
+    if (data.index() != other.data.index()) return false;
+    return std::visit([&other](const auto& lhs) -> bool {
+        using T = std::decay_t<decltype(lhs)>;
+        const auto& rhs = std::get<T>(other.data);
+        if constexpr (std::is_same_v<T, monostate_schema>) {
+            return true;
+        } else if constexpr (std::is_same_v<T, fundamental_schema>) {
+            return lhs.size == rhs.size && lhs.alignment == rhs.alignment;
+        } else if constexpr (std::is_same_v<T, tuple_schema>) {
+            return detail::eq_vec(lhs.elements, rhs.elements);
+        } else if constexpr (std::is_same_v<T, variant_schema>) {
+            return lhs.index_bytes == rhs.index_bytes
+                && detail::eq_vec(lhs.alternatives, rhs.alternatives);
+        } else if constexpr (std::is_same_v<T, vector_schema>) {
+            return lhs.size_bytes == rhs.size_bytes
+                && lhs.size_alignment == rhs.size_alignment
+                && detail::eq_ptr(lhs.element, rhs.element);
+        } else if constexpr (std::is_same_v<T, array_schema>) {
+            return lhs.count == rhs.count
+                && detail::eq_ptr(lhs.element, rhs.element);
+        } else if constexpr (std::is_same_v<T, delimited_schema>) {
+            return lhs.delimiter_mask == rhs.delimiter_mask
+                && lhs.delimiter_expected == rhs.delimiter_expected
+                && detail::eq_ptr(lhs.element, rhs.element);
+        } else {
+            return false;
+        }
+    }, data);
+}
+
+} // namespace muesli::schema
+

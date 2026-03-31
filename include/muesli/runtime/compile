@@ -1,0 +1,76 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/runtime/codec>
+#include <muesli/schema/binary_schema_format>
+#include <muesli/schema/types>
+
+#include <cstddef>
+#include <optional>
+#include <vector>
+
+namespace muesli::runtime {
+
+/**
+ * @brief Creates a runtime codec from a schema_node.
+ *
+ * For v1 this is a trivial construction -- the codec stores the schema
+ * and interprets it at runtime during serialize/deserialize. Future
+ * versions may validate the schema or compile it to an optimized form.
+ *
+ * @param schema The schema describing the binary layout.
+ * @return A runtime::codec ready for serialize/deserialize.
+ */
+inline codec compile(schema::schema_node schema) {
+    return codec(std::move(schema));
+}
+
+/**
+ * @brief Creates a runtime codec from serialized schema bytes.
+ *
+ * Deserializes the schema from a raw byte buffer and constructs a
+ * runtime codec. This is the primary entry-point for loading a schema
+ * from disk and using it to encode/decode data at runtime.
+ *
+ * @param data Pointer to the serialized schema bytes.
+ * @param len  Length of the byte buffer.
+ * @return A runtime::codec on success, or std::nullopt on malformed schema.
+ *
+ * @code
+ * // Write side (compile-time)
+ * auto bytes = muesli::schema::compile(my_struct::codec);
+ * write_file("schema.bin", bytes);
+ *
+ * // Read side (runtime)
+ * auto bytes = read_file("schema.bin");
+ * auto rtCodec = muesli::runtime::compile(bytes.data(), bytes.size());
+ * if (rtCodec) {
+ *     auto value = rtCodec->deserialize(input_stream);
+ * }
+ * @endcode
+ */
+inline std::optional<codec> compile(const std::byte* data, std::size_t len) {
+    auto schema = schema::deserialize_schema(data, len);
+    if (!schema) return std::nullopt;
+    return codec(std::move(*schema));
+}
+
+/**
+ * @brief Creates a runtime codec from a serialized schema byte vector.
+ *
+ * Convenience overload for std::vector<std::byte>.
+ *
+ * @param bytes The serialized schema bytes.
+ * @return A runtime::codec on success, or std::nullopt on malformed schema.
+ */
+inline std::optional<codec> compile(const std::vector<std::byte>& bytes) {
+    return compile(bytes.data(), bytes.size());
+}
+
+} // namespace muesli::runtime
+
