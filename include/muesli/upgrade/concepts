@@ -1,0 +1,61 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <concepts>
+
+namespace muesli::upgrade {
+
+/**
+ * @brief Concept for user-supplied version comparators.
+ *
+ * A comparator defines equality and strict ordering for a custom @p Version
+ * representation. This allows upgrade planning across arbitrary version types
+ * (for example integers, strings, tuples, or user-defined structs).
+ *
+ * @tparam Comparator Comparator type supplied by the user
+ * @tparam Version Version value type
+ *
+ * @code
+ * struct semver { int major, minor, patch; };
+ *
+ * struct semver_comparator {
+ *     bool equal(const semver& lhs, const semver& rhs) const noexcept {
+ *         return lhs.major == rhs.major && lhs.minor == rhs.minor && lhs.patch == rhs.patch;
+ *     }
+ *
+ *     bool less(const semver& lhs, const semver& rhs) const noexcept {
+ *         if (lhs.major != rhs.major) return lhs.major < rhs.major;
+ *         if (lhs.minor != rhs.minor) return lhs.minor < rhs.minor;
+ *         return lhs.patch < rhs.patch;
+ *     }
+ * };
+ *
+ * static_assert(muesli::upgrade::version_comparator<semver_comparator, semver>);
+ * @endcode
+ */
+template<typename Comparator, typename Version>
+concept version_comparator = requires(const Comparator& cmp, const Version& lhs, const Version& rhs) {
+    { cmp.equal(lhs, rhs) } -> std::convertible_to<bool>;
+    { cmp.less(lhs, rhs) } -> std::convertible_to<bool>;
+};
+
+/** @brief Compare two versions for equality via a user-supplied comparator. */
+template<typename Version, typename Comparator>
+requires version_comparator<Comparator, Version>
+constexpr bool version_equal(const Version& lhs, const Version& rhs, const Comparator& cmp) {
+    return static_cast<bool>(cmp.equal(lhs, rhs));
+}
+
+/** @brief Compare two versions for strict ordering via a user-supplied comparator. */
+template<typename Version, typename Comparator>
+requires version_comparator<Comparator, Version>
+constexpr bool version_less(const Version& lhs, const Version& rhs, const Comparator& cmp) {
+    return static_cast<bool>(cmp.less(lhs, rhs));
+}
+
+} // namespace muesli::upgrade
