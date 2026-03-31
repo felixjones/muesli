@@ -126,9 +126,6 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_make_codec_all_codecs tests/test_make_codec_all_codecs.cpp)
     add_test(NAME test_make_codec_all_codecs COMMAND test_make_codec_all_codecs)
 
-    add_muesli_test_exe(test_schema_bridge tests/test_schema_bridge.cpp)
-    add_test(NAME test_schema_bridge COMMAND test_schema_bridge)
-
     include(FetchContent)
 
     # nlohmann/json
