@@ -264,9 +264,6 @@ if(BUILD_EXAMPLES)
 
     add_executable(example_02 examples/example_02.cpp)
     target_link_libraries(example_02 PRIVATE muesli nlohmann_json::nlohmann_json)
-
-    add_executable(example_03 examples/example_03.cpp)
-    target_link_libraries(example_03 PRIVATE muesli)
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include)
