@@ -105,6 +105,9 @@ struct vector_codec : fluent::optionable<vector_codec<ElementCodec, Allocator>>,
     static constexpr value_type decode(const auto& tup) {
         auto&& [size, value] = tup;
         value_type result{};
+        if (size == 0) {
+            return result;
+        }
         result.reserve(size);
 
         auto it = value.begin();
@@ -123,6 +126,9 @@ struct vector_codec : fluent::optionable<vector_codec<ElementCodec, Allocator>>,
     static constexpr value_type decode(auto&& tup) {
         auto&& [size, value] = std::forward<decltype(tup)>(tup);
         value_type result{};
+        if (size == 0) {
+            return result;
+        }
         result.reserve(size);
 
         auto it = value.begin();
