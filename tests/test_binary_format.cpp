@@ -103,6 +103,51 @@ int main() {
         auto d = from_bytes(fmt, bytes);
         assert(d && *d == "line1\nline2\ttab");
     }
+    // -- 2d: string with explicit null terminator verification
+    {
+        // Test that verifies the string encodes with a null terminator
+        // and round-trips back to the same size string
+        auto fmt = mu::make_binary_format<char>(mu::string_codec);
+        std::string original = "hello";
+        std::size_t original_size = original.size();  // 5 characters
+
+        auto bytes = to_bytes(fmt, original);
+
+        // Verify null terminator is present in encoded bytes
+        // The string "hello" (5 chars) + null terminator (1 byte)
+        assert(bytes.size() >= original_size + 1);
+        assert(bytes[original_size] == '\0');  // Null terminator at position 5
+
+        // Decode back and verify size is preserved
+        auto decoded = from_bytes(fmt, bytes);
+        assert(decoded && decoded->size() == original_size);
+        assert(*decoded == original);
+    }
+    // -- 2e: multiple strings with null terminators in sequence
+    {
+        // Test encoding/decoding multiple strings sequentially,
+        // each with its own null terminator
+        auto fmt = mu::make_binary_format<char>(mu::string_codec);
+
+        std::string str1 = "first";   // 5 chars + null
+        std::string str2 = "second";  // 6 chars + null
+        std::string str3 = "xyz";     // 3 chars + null
+
+        std::stringstream ss(std::ios::in | std::ios::out | std::ios::binary);
+        assert(fmt.serialize(str1, ss));
+        assert(fmt.serialize(str2, ss));
+        assert(fmt.serialize(str3, ss));
+
+        ss.seekg(0);
+        auto d1 = from_stream(fmt, ss);
+        auto d2 = from_stream(fmt, ss);
+        auto d3 = from_stream(fmt, ss);
+
+        // Verify all three strings round-trip correctly with size preservation
+        assert(d1 && *d1 == "first" && d1->size() == 5);
+        assert(d2 && *d2 == "second" && d2->size() == 6);
+        assert(d3 && *d3 == "xyz" && d3->size() == 3);
+    }
 
     // =====================================================================
     // 3. Tuple codecs (including string ordering)
