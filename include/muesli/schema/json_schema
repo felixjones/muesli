@@ -29,7 +29,6 @@ namespace schema_detail {
      * | signed_integer     | {"type": "integer"}                                          |
      * | unsigned_integer   | {"type": "integer", "minimum": 0}                            |
      * | floating_point     | {"type": "number"}                                           |
-     * | float_32/64/128    | {"type": "number"}                                           |
      * | string             | {"type": "string"}                                           |
      * | monostate          | {"type": "null"}                                             |
      * | optional_schema    | {"oneOf": [inner, {"type": "null"}]}                         |
@@ -71,53 +70,14 @@ namespace schema_detail {
             if constexpr (K == schema::fundamental_kind::boolean) {
                 Backend::object_set(obj, "type", Backend::make_string("boolean"));
             }
-            else if constexpr (
-                K == schema::fundamental_kind::signed_integer ||
-                K == schema::fundamental_kind::short_integer ||
-                K == schema::fundamental_kind::int_integer ||
-                K == schema::fundamental_kind::long_integer ||
-                K == schema::fundamental_kind::long_long_integer ||
-                K == schema::fundamental_kind::int8 ||
-                K == schema::fundamental_kind::int16 ||
-                K == schema::fundamental_kind::int32 ||
-                K == schema::fundamental_kind::int64 ||
-                K == schema::fundamental_kind::intmax ||
-                K == schema::fundamental_kind::intptr ||
-                K == schema::fundamental_kind::ptrdiff ||
-                K == schema::fundamental_kind::signed_character
-            ) {
+            else if constexpr (K == schema::fundamental_kind::signed_integer) {
                 Backend::object_set(obj, "type", Backend::make_string("integer"));
             }
-            else if constexpr (
-                K == schema::fundamental_kind::unsigned_integer ||
-                K == schema::fundamental_kind::unsigned_short_integer ||
-                K == schema::fundamental_kind::unsigned_int_integer ||
-                K == schema::fundamental_kind::unsigned_long_integer ||
-                K == schema::fundamental_kind::unsigned_long_long_integer ||
-                K == schema::fundamental_kind::uint8 ||
-                K == schema::fundamental_kind::uint16 ||
-                K == schema::fundamental_kind::uint32 ||
-                K == schema::fundamental_kind::uint64 ||
-                K == schema::fundamental_kind::uintmax ||
-                K == schema::fundamental_kind::uintptr ||
-                K == schema::fundamental_kind::size ||
-                K == schema::fundamental_kind::unsigned_character ||
-                K == schema::fundamental_kind::character ||
-                K == schema::fundamental_kind::wide_character ||
-                K == schema::fundamental_kind::char8 ||
-                K == schema::fundamental_kind::char16 ||
-                K == schema::fundamental_kind::char32 ||
-                K == schema::fundamental_kind::byte
-            ) {
+            else if constexpr (K == schema::fundamental_kind::unsigned_integer) {
                 Backend::object_set(obj, "type", Backend::make_string("integer"));
                 Backend::object_set(obj, "minimum", Backend::make_int(0));
             }
-            else if constexpr (
-                K == schema::fundamental_kind::floating_point ||
-                K == schema::fundamental_kind::float_32 ||
-                K == schema::fundamental_kind::float_64 ||
-                K == schema::fundamental_kind::float_128
-            ) {
+            else if constexpr (K == schema::fundamental_kind::floating_point) {
                 Backend::object_set(obj, "type", Backend::make_string("number"));
             }
             else if constexpr (K == schema::fundamental_kind::string) {

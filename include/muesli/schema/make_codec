@@ -22,10 +22,14 @@ namespace schema_detail {
     /**
      * @brief Builds a concrete muesli codec from a compile-time schema node
      *
-     * Exact primitive kinds (for example float_32/float_64/float_128, int32,
-     * uint16, char8) map back to their corresponding provided codecs.
-     * Generic kinds (signed_integer/unsigned_integer/floating_point) remain
-     * available as compatibility categories and map to canonical codecs.
+     * Uses canonical widest types so the resulting codec is binary-format
+     * compatible with the original codec that produced the schema:
+     *   signed_integer  -> int64_t
+     *   unsigned_integer -> uint64_t
+     *   floating_point   -> double
+     *   boolean          -> bool
+     *   string           -> std::string
+     *   monostate        -> std::monostate
      */
     struct codec_builder {
 
@@ -69,105 +73,6 @@ namespace schema_detail {
             else if constexpr (K == schema::fundamental_kind::floating_point) {
                 return double_codec;
             }
-            else if constexpr (K == schema::fundamental_kind::float_32) {
-                return float_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::float_64) {
-                return double_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::float_128) {
-                return long_double_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::short_integer) {
-                return short_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::int_integer) {
-                return int_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::long_integer) {
-                return long_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::long_long_integer) {
-                return long_long_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::unsigned_short_integer) {
-                return unsigned_short_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::unsigned_int_integer) {
-                return unsigned_int_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::unsigned_long_integer) {
-                return unsigned_long_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::unsigned_long_long_integer) {
-                return unsigned_long_long_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::int8) {
-                return int8_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::int16) {
-                return int16_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::int32) {
-                return int32_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::int64) {
-                return int64_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uint8) {
-                return uint8_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uint16) {
-                return uint16_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uint32) {
-                return uint32_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uint64) {
-                return uint64_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::intmax) {
-                return intmax_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uintmax) {
-                return uintmax_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::intptr) {
-                return intptr_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::uintptr) {
-                return uintptr_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::size) {
-                return size_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::ptrdiff) {
-                return ptrdiff_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::character) {
-                return char_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::signed_character) {
-                return signed_char_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::unsigned_character) {
-                return unsigned_char_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::wide_character) {
-                return wchar_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::char8) {
-                return char8_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::char16) {
-                return char16_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::char32) {
-                return char32_codec;
-            }
-            else if constexpr (K == schema::fundamental_kind::byte) {
-                return byte_codec;
-            }
             else if constexpr (K == schema::fundamental_kind::string) {
                 return string_codec;
             }
@@ -202,16 +107,18 @@ namespace schema_detail {
 /**
  * @brief Reconstruct a type-erased codec from a compile-time schema
  *
- * Walks the schema IR and builds a concrete muesli codec. Exact primitive
- * kinds reconstruct the matching provided codec type, while generic category
- * kinds map to canonical codecs.
+ * Walks the schema IR and builds a concrete muesli codec using canonical
+ * widest types (int64_t, uint64_t, double, bool, std::string, monostate).
+ * The resulting codec is structurally equivalent to the original and
+ * produces identical byte streams via binary_format, enabling data
+ * migration and upgrader workflows.
  *
  * Object schemas produce named tuple codecs (using schema::named_codec)
  * so json_format emits JSON objects with the original key names.
  *
  * @tparam S A compile-time schema type (primitive_schema, object_schema, etc.)
  * @param schema The schema to build a codec from
- * @return A concrete muesli codec matching the schema primitive kinds
+ * @return A concrete muesli codec with canonical types
  *
  * @code
  * static constexpr auto s = muesli::make_schema(point::codec);

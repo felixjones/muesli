@@ -283,17 +283,17 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::float_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::float_32);
+        static_assert(decltype(node)::kind == s::primitive_kind::floating_point);
     }
     {
         constexpr auto node = mu::make_schema(mu::double_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(node)::kind == s::primitive_kind::floating_point);
     }
     {
         constexpr auto node = mu::make_schema(mu::long_double_codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::float_128);
+        static_assert(decltype(node)::kind == s::primitive_kind::floating_point);
     }
 
     // -- 1d: boolean -----------------------------------------------------
@@ -403,7 +403,7 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::optional_codec(mu::double_codec));
         static_assert(s::is_optional_v<decltype(node)>);
-        static_assert(decltype(node.inner)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(node.inner)::kind == s::primitive_kind::floating_point);
     }
     // -- 2d: optional<bool> ----------------------------------------------
     {
@@ -439,7 +439,7 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::vector_of(mu::double_codec));
         static_assert(s::is_array_v<decltype(node)>);
-        static_assert(decltype(node.element)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(node.element)::kind == s::primitive_kind::floating_point);
     }
     // -- 3d: vector<bool> ------------------------------------------------
     {
@@ -464,7 +464,7 @@ int main() {
     {
         constexpr auto node = mu::make_schema(mu::array_of<1>(mu::float_codec));
         static_assert(s::is_array_v<decltype(node)>);
-        static_assert(decltype(node.element)::kind == s::primitive_kind::float_32);
+        static_assert(decltype(node.element)::kind == s::primitive_kind::floating_point);
     }
     // -- 3h: nested vector -- vector<vector<int32_t>> --------------------
     {
@@ -594,7 +594,7 @@ int main() {
         static_assert(std::get<2>(node.fields).name == "verbose");
         static_assert(decltype(std::get<2>(node.fields).schema)::kind == s::primitive_kind::boolean);
         static_assert(std::get<3>(node.fields).name == "timeout");
-        static_assert(decltype(std::get<3>(node.fields).schema)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(std::get<3>(node.fields).schema)::kind == s::primitive_kind::floating_point);
     }
     // -- 4h: all-optional fields -----------------------------------------
     {
@@ -625,7 +625,7 @@ int main() {
         static_assert(std::get<6>(node.fields).name == "g");
         static_assert(decltype(std::get<6>(node.fields).schema)::kind == s::primitive_kind::boolean);
         static_assert(std::get<7>(node.fields).name == "h");
-        static_assert(decltype(std::get<7>(node.fields).schema)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(std::get<7>(node.fields).schema)::kind == s::primitive_kind::floating_point);
     }
     // -- 4k: object with array field (fixed-size std::array) -------------
     {
@@ -683,7 +683,7 @@ int main() {
         static_assert(s::is_tuple_v<decltype(node)>);
         static_assert(s::element_count_v<decltype(node)> == 3);
         static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == s::primitive_kind::signed_integer);
-        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == s::primitive_kind::float_32);
+        static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == s::primitive_kind::floating_point);
         static_assert(std::remove_cvref_t<decltype(std::get<2>(node.elements))>::kind == s::primitive_kind::boolean);
     }
     // -- 5b: tuple<string, string> (2-element) ---------------------------
@@ -713,7 +713,7 @@ int main() {
         static_assert(s::element_count_v<decltype(node)> == 6);
         static_assert(std::remove_cvref_t<decltype(std::get<0>(node.elements))>::kind == s::primitive_kind::signed_integer);
         static_assert(std::remove_cvref_t<decltype(std::get<1>(node.elements))>::kind == s::primitive_kind::unsigned_integer);
-        static_assert(std::remove_cvref_t<decltype(std::get<2>(node.elements))>::kind == s::primitive_kind::float_32);
+        static_assert(std::remove_cvref_t<decltype(std::get<2>(node.elements))>::kind == s::primitive_kind::floating_point);
         static_assert(std::remove_cvref_t<decltype(std::get<3>(node.elements))>::kind == s::primitive_kind::boolean);
         static_assert(std::remove_cvref_t<decltype(std::get<4>(node.elements))>::kind == s::primitive_kind::string);
         static_assert(std::remove_cvref_t<decltype(std::get<5>(node.elements))>::kind == s::primitive_kind::monostate);
@@ -824,7 +824,7 @@ int main() {
             [](double v) { return v >= 0.0 && v <= 1.0; });
         constexpr auto node = mu::make_schema(codec);
         static_assert(s::is_primitive_v<decltype(node)>);
-        static_assert(decltype(node)::kind == s::primitive_kind::float_64);
+        static_assert(decltype(node)::kind == s::primitive_kind::floating_point);
     }
     // -- 7d: or_else on int (constrained + fallback) ---------------------
     {

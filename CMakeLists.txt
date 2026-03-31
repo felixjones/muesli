@@ -120,11 +120,11 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_schema tests/test_schema.cpp)
     add_test(NAME test_schema COMMAND test_schema)
 
+    add_muesli_test_exe(test_json_schema tests/test_json_schema.cpp)
+    add_test(NAME test_json_schema COMMAND test_json_schema)
+
     add_muesli_test_exe(test_schema_make_codec tests/test_schema_make_codec.cpp)
     add_test(NAME test_schema_make_codec COMMAND test_schema_make_codec)
-
-    add_muesli_test_exe(test_make_codec_all_codecs tests/test_make_codec_all_codecs.cpp)
-    add_test(NAME test_make_codec_all_codecs COMMAND test_make_codec_all_codecs)
 
     include(FetchContent)
 
@@ -142,11 +142,6 @@ if(BUILD_TESTING)
         add_muesli_test_exe(test_json_nlohmann tests/test_json_nlohmann.cpp)
         target_link_libraries(test_json_nlohmann PRIVATE nlohmann_json::nlohmann_json)
         add_test(NAME test_json_nlohmann COMMAND test_json_nlohmann)
-
-        add_muesli_test_exe(test_json_schema tests/test_json_schema.cpp)
-        target_include_directories(test_json_schema PRIVATE ${nlohmann_json_SOURCE_DIR}/include)
-        target_link_libraries(test_json_schema PRIVATE nlohmann_json::nlohmann_json)
-        add_test(NAME test_json_schema COMMAND test_json_schema)
 
         add_muesli_test_exe(test_named_member tests/test_named_member.cpp)
         target_link_libraries(test_named_member PRIVATE nlohmann_json::nlohmann_json)
