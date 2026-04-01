@@ -1,0 +1,83 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/format/binary_format>
+#include <muesli/runtime/compile>
+#include <muesli/runtime/value>
+#include <muesli/schema/lowering>
+#include <muesli/util/concepts>
+
+#include <optional>
+#include <sstream>
+
+namespace muesli::runtime {
+
+/**
+ * @brief Adapter that converts runtime::value_node trees back to typed values.
+ *
+ * The adapter bridges the runtime codec world (schema + value_node) and a typed
+ * codec's value_type by round-tripping through the binary representation.
+ *
+ * @tparam C Typed codec satisfying Codec
+ */
+template<Codec C>
+struct codec_adapter {
+    /** @brief Typed value represented by the codec. */
+    using value_type = typename C::value_type;
+
+    /** @brief Typed compile-time codec used for final decode. */
+    C typed_codec;
+
+    /** @brief Constructs an adapter from a typed codec. */
+    constexpr explicit codec_adapter(const C& codec) noexcept : typed_codec(codec) {}
+
+    /**
+     * @brief Adapts a runtime value tree into the typed value.
+     * @param runtime_value Value tree produced by a schema-compatible runtime codec.
+     * @return Typed value on success, std::nullopt on schema/type mismatch.
+     */
+    std::optional<value_type> adapt(const value_node& runtime_value) const {
+        auto runtime_codec = compile(schema::build_schema(typed_codec));
+
+        std::stringstream encoded(std::ios::in | std::ios::out | std::ios::binary);
+        if (!runtime_codec.serialize(runtime_value, encoded)) {
+            return std::nullopt;
+        }
+
+        auto typed_format = make_binary_format<char>(typed_codec);
+        std::istringstream input(encoded.str(), std::ios::binary);
+        return typed_format.deserialize(input);
+    }
+
+    /**
+     * @brief Adapts an optional runtime value tree into the typed value.
+     * @param runtime_value Optional runtime value.
+     * @return Typed value on success, std::nullopt when input is empty or invalid.
+     */
+    std::optional<value_type> adapt(const std::optional<value_node>& runtime_value) const {
+        if (!runtime_value) {
+            return std::nullopt;
+        }
+        return adapt(*runtime_value);
+    }
+};
+
+/**
+ * @brief Creates a runtime value adapter for a typed codec.
+ *
+ * @tparam C Typed codec type
+ * @param codec Typed compile-time codec
+ * @return A codec_adapter capable of converting runtime::value_node to C::value_type
+ */
+template<Codec C>
+constexpr auto adapter(const C& codec) noexcept {
+    return codec_adapter<C>{codec};
+}
+
+} // namespace muesli::runtime
+
