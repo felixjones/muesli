@@ -136,6 +136,8 @@ inline std::optional<schema_node> deserialize_schema(const std::byte* bytes, std
             auto size = read_u8();
             auto alignment = read_u8();
             if (!size || !alignment) return std::nullopt;
+            // Validate that alignment is a valid power of 2 and size is non-zero
+            if ((*alignment & (*alignment - 1)) != 0) return std::nullopt;  // Check if power of 2
             return schema_node{fundamental_schema{*size, *alignment}};
         }
 
@@ -156,6 +158,9 @@ inline std::optional<schema_node> deserialize_schema(const std::byte* bytes, std
             auto count = read_u16();
             auto index_bytes = read_u8();
             if (!count || !index_bytes) return std::nullopt;
+            // Validate that index_bytes is a valid value (1, 2, 4, or 8)
+            if (*index_bytes != 1 && *index_bytes != 2 && *index_bytes != 4 && *index_bytes != 8)
+                return std::nullopt;
             variant_schema vs;
             vs.index_bytes = *index_bytes;
             vs.alternatives.reserve(*count);
@@ -171,6 +176,8 @@ inline std::optional<schema_node> deserialize_schema(const std::byte* bytes, std
             auto size_bytes = read_u8();
             auto size_alignment = read_u8();
             if (!size_bytes || !size_alignment) return std::nullopt;
+            // Validate that size_alignment is a valid power of 2
+            if ((*size_alignment & (*size_alignment - 1)) != 0) return std::nullopt;
             auto elem = self(self);
             if (!elem) return std::nullopt;
             vector_schema vs;
@@ -224,4 +231,3 @@ inline std::optional<schema_node> deserialize_schema(const std::vector<std::byte
 }
 
 } // namespace muesli::schema
-
