@@ -9,6 +9,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <optional>
 #include <sstream>
@@ -347,7 +348,8 @@ int main() {
         // Serialize a typed value to a data stream
         auto typedFmt = mu::make_binary_format<char>(mu::int32_codec);
         std::stringstream dataSS(std::ios::in | std::ios::out | std::ios::binary);
-        assert(typedFmt.serialize(std::int32_t{-42}, dataSS));
+        bool serialized = typedFmt.serialize(std::int32_t{-42}, dataSS);
+        assert(serialized);
         std::string dataBytes = dataSS.str();
 
         // Read side: compile runtime codec from schema bytes (as if loaded from disk)
@@ -377,7 +379,8 @@ int main() {
         auto typedFmt = mu::make_binary_format<char>(codec);
         std::stringstream dataSS(std::ios::in | std::ios::out | std::ios::binary);
         person val{25, "Bob"};
-        assert(typedFmt.serialize(val, dataSS));
+        bool serialized = typedFmt.serialize(val, dataSS);
+        assert(serialized);
         std::string dataBytes = dataSS.str();
 
         // Read side: reconstruct runtime codec from schema bytes
@@ -423,7 +426,8 @@ int main() {
         auto typedFmt = mu::make_binary_format<char>(codec);
         std::vector<std::int32_t> val = {10, 20, 30};
         std::stringstream dataSS(std::ios::in | std::ios::out | std::ios::binary);
-        assert(typedFmt.serialize(val, dataSS));
+        bool serialized = typedFmt.serialize(val, dataSS);
+        assert(serialized);
         std::string dataBytes = dataSS.str();
 
         // Read side
@@ -454,7 +458,8 @@ int main() {
         auto typedFmt = mu::make_binary_format<char>(codec);
         std::optional<std::string> val = "hello";
         std::stringstream dataSS(std::ios::in | std::ios::out | std::ios::binary);
-        assert(typedFmt.serialize(val, dataSS));
+        bool serialized = typedFmt.serialize(val, dataSS);
+        assert(serialized);
         std::string dataBytes = dataSS.str();
 
         // Read side
@@ -473,7 +478,8 @@ int main() {
         // Write side: absent value
         std::optional<std::string> absent;
         std::stringstream dataSS2(std::ios::in | std::ios::out | std::ios::binary);
-        assert(typedFmt.serialize(absent, dataSS2));
+        bool serializedAbsent = typedFmt.serialize(absent, dataSS2);
+        assert(serializedAbsent);
         std::string dataBytes2 = dataSS2.str();
 
         std::istringstream dataIn2(dataBytes2, std::ios::binary);
@@ -499,7 +505,8 @@ int main() {
         }
         rt::value_node rtVal{std::move(sv)};
         std::stringstream rtOut(std::ios::in | std::ios::out | std::ios::binary);
-        assert(rtCodec->serialize(rtVal, rtOut));
+        bool serialized = rtCodec->serialize(rtVal, rtOut);
+        assert(serialized);
         std::string rtBytes = rtOut.str();
 
         // Typed codec deserializes the runtime-produced bytes
@@ -522,4 +529,3 @@ int main() {
 
     return 0;
 }
-
