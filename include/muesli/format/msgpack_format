@@ -1304,24 +1304,7 @@ struct msgpack_format {
                     }
                 });
             }
-
-            // Backward-compatible fallback for older array-form payloads.
-            auto size = msgpack_detail::read_array_size(input, marker);
-            if (!size) return std::nullopt;
-            std::vector<elem_t> values;
-            values.reserve(*size);
-            for (std::size_t i = 0; i < *size; ++i) {
-                auto elem_marker = msgpack_detail::read_byte(input);
-                if (!elem_marker) return std::nullopt;
-                auto value = deserialize_unsigned<std::uint8_t>(*elem_marker, input);
-                if (!value) return std::nullopt;
-                if constexpr (std::same_as<std::decay_t<elem_t>, std::byte>) {
-                    values.push_back(static_cast<std::byte>(*value));
-                } else {
-                    values.push_back(static_cast<elem_t>(*value));
-                }
-            }
-            return value_type(std::move(values));
+            return std::nullopt;
         } else if constexpr (msgpack_detail::is_char_type_v<elem_t>) {
             auto str = msgpack_detail::read_string(input, marker);
             if (!str) return std::nullopt;

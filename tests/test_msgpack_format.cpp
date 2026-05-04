@@ -185,11 +185,6 @@ int main() {
         auto decoded = from_bytes(fmt, encoded);
         assert(decoded.has_value());
         assert(collect_range(std::move(*decoded)) == payload);
-
-        // Backward-compatible decode of legacy array form.
-        auto legacy = from_bytes(fmt, bytes({0x94, 0x01, 0x02, 0x7E, 0x7F}));
-        assert(legacy.has_value());
-        assert(collect_range(std::move(*legacy)) == payload);
     }
     {
         auto codec = mu::range_codec(mu::identity_codec<std::byte>{});
