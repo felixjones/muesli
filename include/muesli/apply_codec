@@ -72,7 +72,7 @@ struct apply_codec : fluent::optionable<apply_codec<ArgCodec, ValueType>>,
             return encoded_type{value};
         } else if constexpr (is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>) {
             return encode_optional(value);
-        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+        } else if constexpr (Range<encoded_type> && Range<value_type>) {
             if constexpr (requires { encoded_type{value.begin(), value.end()}; }) {
                 return encoded_type{value.begin(), value.end()};
             } else {
@@ -98,7 +98,7 @@ struct apply_codec : fluent::optionable<apply_codec<ArgCodec, ValueType>>,
             return encoded_type{std::move(value)};
         } else if constexpr (is_optional_v<encoded_type> && HasOptionalValueCheck<value_type>) {
             return encode_optional_move(std::move(value));
-        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+        } else if constexpr (Range<encoded_type> && Range<value_type>) {
             if constexpr (requires {
                               encoded_type{std::make_move_iterator(value.begin()),
                                            std::make_move_iterator(value.end())};
@@ -135,7 +135,7 @@ struct apply_codec : fluent::optionable<apply_codec<ArgCodec, ValueType>>,
                 return std::apply(
                     []<typename... Arg>(Arg&&... args) { return value_type{std::forward<Arg>(args)...}; }, value);
             }
-        } else if constexpr (std::ranges::range<encoded_type> && std::ranges::range<value_type>) {
+        } else if constexpr (Range<encoded_type> && Range<value_type>) {
             if constexpr (requires { value_type{value.begin(), value.end()}; }) {
                 return value_type{value.begin(), value.end()};
             } else {

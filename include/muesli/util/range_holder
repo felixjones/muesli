@@ -6,13 +6,15 @@
 
 #pragma once
 
+#include <muesli/util/concepts>
+
 #include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -209,22 +211,26 @@ struct range_holder {
      * @tparam R Movable range whose value_type matches T
      * @param r Rvalue range to consume
      */
-    template<std::ranges::range R>
-    requires std::same_as<std::ranges::range_value_t<R>, T> && std::is_rvalue_reference_v<R&&>
-    explicit range_holder(R&& r)
-        : m_data(std::in_place_type<generator_type>,
-                 [owned = std::decay_t<R>(std::forward<R>(r)), init = true, it = typename std::decay_t<R>::iterator{},
-                  end = typename std::decay_t<R>::iterator{}]() mutable -> std::optional<T> {
-                     if (init) {
-                         it = owned.begin();
-                         end = owned.end();
-                         init = false;
-                     }
-                     if (it != end) {
-                         return *it++;
-                     }
-                     return std::nullopt;
-                 }) {}
+    template<Range R>
+    requires std::same_as<range_value_type<R>, T> && std::is_rvalue_reference_v<R&&>
+    explicit range_holder(R&& r) {
+        using owned_type = std::decay_t<R>;
+        using iter_type = decltype(std::begin(std::declval<owned_type&>()));
+
+        m_data = generator_type(
+            [owned = owned_type(std::forward<R>(r)), begun = false, it = std::optional<iter_type>{},
+             end = std::optional<iter_type>{}]() mutable -> std::optional<T> {
+                if (!begun) {
+                    it = std::begin(owned);
+                    end = std::end(owned);
+                    begun = true;
+                }
+                if (*it != *end) {
+                    return *(*it)++;
+                }
+                return std::nullopt;
+            });
+    }
 
     /** @brief Wraps a move-only generator directly */
     constexpr explicit range_holder(generator_type&& gen) {
@@ -236,19 +242,20 @@ struct range_holder {
      * @tparam R Contiguous range whose value_type matches T
      * @param r Range to reference
      */
-    template<std::ranges::contiguous_range R>
-    requires std::same_as<std::ranges::range_value_t<R>, T>
-    constexpr explicit range_holder(const R& r) : m_data(std::span<const T>(r.begin(), r.end())) {}
+    template<ContiguousRange R>
+    requires std::same_as<range_value_type<R>, T>
+    constexpr explicit range_holder(const R& r)
+        : m_data(std::span<const T>(std::data(r), static_cast<std::size_t>(std::size(r)))) {}
 
     /**
      * @brief Wraps a non-contiguous range via a generator (caller must keep it alive)
      * @tparam R Non-contiguous range whose value_type matches T
      * @param r Range to iterate over lazily
      */
-    template<std::ranges::range R>
-    requires(!std::ranges::contiguous_range<R>) && std::same_as<std::ranges::range_value_t<R>, T>
+    template<Range R>
+    requires(!ContiguousRange<R>) && std::same_as<range_value_type<R>, T>
     explicit range_holder(const R& r) {
-        m_data = generator_type([it = r.begin(), end = r.end()]() mutable -> std::optional<T> {
+        m_data = generator_type([it = std::begin(r), end = std::end(r)]() mutable -> std::optional<T> {
             if (it != end) {
                 return *it++;
             }

@@ -7,8 +7,10 @@
 #pragma once
 
 #include <concepts>
+#include <iterator>
 #include <optional>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -273,6 +275,30 @@ template<typename T>
 concept HasTupleSize = requires {
     { std::tuple_size<std::remove_cvref_t<T>>::value };
 };
+
+/** @brief Concept for range-like types without depending on <ranges>. */
+template<typename R>
+concept Range = requires(R& r) {
+    std::begin(r);
+    std::end(r);
+};
+
+/** @brief Iterator type for range-like types. */
+template<typename R>
+using range_iterator_type = decltype(std::begin(std::declval<R&>()));
+
+/** @brief Value type for range-like types. */
+template<typename R>
+using range_value_type = std::iter_value_t<range_iterator_type<R>>;
+
+/** @brief Concept for contiguous range-like types with data/size access. */
+template<typename R>
+concept ContiguousRange =
+    Range<R> && requires(const std::remove_reference_t<R>& r) {
+        std::data(r);
+        std::size(r);
+    } && std::same_as<std::remove_cv_t<std::remove_pointer_t<decltype(std::data(std::declval<const std::remove_reference_t<R>&>()))>>,
+                      range_value_type<R>>;
 
 /**
  * @brief Concept that checks if all codecs in a pack support project(Owner)

@@ -29,11 +29,11 @@ namespace muesli {
 template<typename Storage, Codec InnerCodec>
 requires(!std::is_pointer_v<Storage>)
 constexpr auto make_nullable(const InnerCodec& inner) {
-    using inner_value_t = typename InnerCodec::value_type;
+    using inner_value_type = typename InnerCodec::value_type;
 
     return optional_codec(inner).transform(
-        // Encode: Storage -> std::optional<inner_value_t>
-        [](const Storage& s) -> std::optional<inner_value_t> {
+        // Encode: Storage -> std::optional<inner_value_type>
+        [](const Storage& s) -> std::optional<inner_value_type> {
             if constexpr (requires { s.get(); }) {
                 if (!s.get())
                     return std::nullopt;
@@ -48,16 +48,16 @@ constexpr auto make_nullable(const InnerCodec& inner) {
                 return *s;
             }
         },
-        // Decode: std::optional<inner_value_t> -> Storage
-        [](std::optional<inner_value_t>&& opt) -> Storage {
+        // Decode: std::optional<inner_value_type> -> Storage
+        [](std::optional<inner_value_type>&& opt) -> Storage {
             if (!opt.has_value()) {
                 return Storage{};
             }
-            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_t>>) {
-                return std::make_shared<inner_value_t>(std::move(*opt));
-            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_t>>) {
-                return std::make_unique<inner_value_t>(std::move(*opt));
-            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_t>>) {
+            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_type>>) {
+                return std::make_shared<inner_value_type>(std::move(*opt));
+            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_type>>) {
+                return std::make_unique<inner_value_type>(std::move(*opt));
+            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_type>>) {
                 return std::move(opt);
             } else {
                 return Storage(std::move(*opt));
@@ -80,17 +80,17 @@ constexpr auto make_nullable(const InnerCodec& inner) {
 template<typename Storage, Codec InnerCodec, typename Allocator>
 requires std::is_pointer_v<Storage>
 constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
-    using inner_value_t = typename InnerCodec::value_type;
+    using inner_value_type = typename InnerCodec::value_type;
 
     return optional_codec(inner).transform(
-        // Encode: Storage -> std::optional<inner_value_t>
-        [](const Storage& s) -> std::optional<inner_value_t> {
+        // Encode: Storage -> std::optional<inner_value_type>
+        [](const Storage& s) -> std::optional<inner_value_type> {
             if (!s)
                 return std::nullopt;
             return *s;
         },
-        // Decode: std::optional<inner_value_t> -> Storage
-        [alloc](std::optional<inner_value_t>&& opt) mutable -> Storage {
+        // Decode: std::optional<inner_value_type> -> Storage
+        [alloc](std::optional<inner_value_type>&& opt) mutable -> Storage {
             if (!opt.has_value()) {
                 return nullptr;
             }
@@ -118,8 +118,8 @@ constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
  */
 template<template<typename...> class StorageTemplate, Codec InnerCodec>
 constexpr auto make_nullable(const InnerCodec& inner) {
-    using inner_value_t = typename InnerCodec::value_type;
-    return make_nullable<StorageTemplate<inner_value_t>>(inner);
+    using inner_value_type = typename InnerCodec::value_type;
+    return make_nullable<StorageTemplate<inner_value_type>>(inner);
 }
 
 /**
@@ -133,8 +133,8 @@ constexpr auto make_nullable(const InnerCodec& inner) {
  */
 template<template<typename...> class StorageTemplate, Codec InnerCodec, typename Allocator>
 constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
-    using inner_value_t = typename InnerCodec::value_type;
-    return make_nullable<StorageTemplate<inner_value_t>>(inner, alloc);
+    using inner_value_type = typename InnerCodec::value_type;
+    return make_nullable<StorageTemplate<inner_value_type>>(inner, alloc);
 }
 
 /**
@@ -150,27 +150,27 @@ constexpr auto make_nullable(const InnerCodec& inner, Allocator alloc) {
 template<typename Storage, Codec InnerCodec>
 requires(!std::is_pointer_v<Storage>)
 constexpr auto make_nullable_range(const InnerCodec& inner) {
-    using inner_value_t = typename InnerCodec::value_type;
+    using inner_value_type = typename InnerCodec::value_type;
 
     return inner.transform(
-        // Encode: Storage -> inner_value_t
-        [](const Storage& s) -> inner_value_t {
+        // Encode: Storage -> inner_value_type
+        [](const Storage& s) -> inner_value_type {
             if constexpr (requires { s.get(); }) {
                 if (!s.get()) {
                     // nullptr -> empty container
-                    return inner_value_t{};
+                    return inner_value_type{};
                 }
                 return *s;
             } else if constexpr (requires { *s; }) {
                 // Raw pointer-like syntax
                 if (!s) {
-                    return inner_value_t{};
+                    return inner_value_type{};
                 }
                 return *s;
             } else if constexpr (requires { s.has_value(); }) {
                 // Optional-like
                 if (!s.has_value()) {
-                    return inner_value_t{};
+                    return inner_value_type{};
                 }
                 return *s;
             } else {
@@ -178,8 +178,8 @@ constexpr auto make_nullable_range(const InnerCodec& inner) {
                 return s;
             }
         },
-        // Decode: inner_value_t -> Storage
-        [](inner_value_t&& range) -> Storage {
+        // Decode: inner_value_type -> Storage
+        [](inner_value_type&& range) -> Storage {
             bool is_empty = false;
             if constexpr (requires { range.empty(); }) {
                 is_empty = range.empty();
@@ -192,12 +192,12 @@ constexpr auto make_nullable_range(const InnerCodec& inner) {
                 return Storage{};
             }
 
-            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_t>>) {
-                return std::make_shared<inner_value_t>(std::move(range));
-            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_t>>) {
-                return std::make_unique<inner_value_t>(std::move(range));
-            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_t>>) {
-                return std::optional<inner_value_t>(std::move(range));
+            if constexpr (std::is_same_v<Storage, std::shared_ptr<inner_value_type>>) {
+                return std::make_shared<inner_value_type>(std::move(range));
+            } else if constexpr (std::is_same_v<Storage, std::unique_ptr<inner_value_type>>) {
+                return std::make_unique<inner_value_type>(std::move(range));
+            } else if constexpr (std::is_same_v<Storage, std::optional<inner_value_type>>) {
+                return std::optional<inner_value_type>(std::move(range));
             } else {
                 return Storage(std::move(range));
             }
@@ -213,7 +213,7 @@ constexpr auto make_nullable_range(const InnerCodec& inner) {
  */
 template<template<typename...> class StorageTemplate, Codec InnerCodec>
 constexpr auto make_nullable_range(const InnerCodec& inner) {
-    using inner_value_t = typename InnerCodec::value_type;
-    return make_nullable_range<StorageTemplate<inner_value_t>>(inner);
+    using inner_value_type = typename InnerCodec::value_type;
+    return make_nullable_range<StorageTemplate<inner_value_type>>(inner);
 }
 } // namespace muesli

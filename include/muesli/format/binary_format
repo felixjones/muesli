@@ -14,6 +14,7 @@
 #include <concepts>
 #include <cstdint>
 #include <ios>
+#include <iterator>
 #include <limits>
 
 namespace muesli {
@@ -172,7 +173,7 @@ struct binary_format {
     constexpr std::optional<value_type> deserialize_primitive(InputStream<ByteT> auto& input) const
         requires std::is_fundamental_v<value_type>
     {
-        using byte_array_t = std::array<ByteT, sizeof(value_type)>;
+        using byte_array_type = std::array<ByteT, sizeof(value_type)>;
         align_input(input, alignof(value_type));
         const auto value = read_bytes<sizeof(value_type)>(input);
         if (!value.has_value()) {
@@ -182,7 +183,7 @@ struct binary_format {
             return std::bit_cast<value_type>(*value);
         } else if constexpr (requires { value_type(value.begin(), value.end()); }) {
             return value_type(value->begin(), value->end());
-        } else if constexpr (std::constructible_from<value_type, byte_array_t>) {
+        } else if constexpr (std::constructible_from<value_type, byte_array_type>) {
             return value_type(*value);
         } else {
             static_assert(sizeof(value_type) == 0, "Cannot construct value_type from byte array");
@@ -298,8 +299,8 @@ struct binary_format {
             auto deserialize_one = [&]<std::size_t I>() {
                 if (!all_ok) return;
                 auto elem_codec = std::get<I>(codec.codecs);
-                using elem_codec_t = std::decay_t<decltype(elem_codec)>;
-                binary_format<elem_codec_t, ByteT> elem_fmt{elem_codec};
+                using element_codec_type = std::decay_t<decltype(elem_codec)>;
+                binary_format<element_codec_type, ByteT> elem_fmt{elem_codec};
                 if (auto result = elem_fmt.deserialize(input)) {
                     std::get<I>(elements) = std::move(*result);
                 } else {
@@ -528,18 +529,23 @@ struct binary_format {
         }
     }
 
-    template<OutputStream<ByteT> ByteStream>
-    constexpr void write_to(std::ranges::range auto&& value, ByteStream& output) const
-        requires std::same_as<std::ranges::range_value_t<std::decay_t<decltype(value)>>, ByteT>
+    template<typename RangeValue, OutputStream<ByteT> ByteStream>
+    constexpr void write_to(RangeValue&& value, ByteStream& output) const
+        requires Range<std::remove_reference_t<RangeValue>> &&
+                 std::same_as<range_value_type<std::remove_reference_t<RangeValue>>, ByteT>
     {
-        if constexpr (requires { output << value[0]; }) {
+        if constexpr (requires { output << *std::begin(value); }) {
             for (auto& byte : value) {
                 output << byte;
             }
-        } else if constexpr (requires { output.write(value.data(), static_cast<std::streamsize>(value.size())); }) {
-            output.write(value.data(), static_cast<std::streamsize>(value.size()));
-        } else if constexpr (requires { output.sputn(value.data(), static_cast<std::streamsize>(value.size())); }) {
-            output.sputn(value.data(), static_cast<std::streamsize>(value.size()));
+        } else if constexpr (requires {
+                                 output.write(std::data(value), static_cast<std::streamsize>(std::size(value)));
+                             }) {
+            output.write(std::data(value), static_cast<std::streamsize>(std::size(value)));
+        } else if constexpr (requires {
+                                 output.sputn(std::data(value), static_cast<std::streamsize>(std::size(value)));
+                             }) {
+            output.sputn(std::data(value), static_cast<std::streamsize>(std::size(value)));
         }
     }
 

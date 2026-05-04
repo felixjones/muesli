@@ -210,10 +210,10 @@ schema_node build_schema(const C& codec) {
                 make_node(build_schema(std::get<Is>(codec.codecs)))), ...);
 
             // Compute index_bytes matching binary_format logic
-            using variant_t = typename codec_type::value_type;
+            using variant_type = typename codec_type::value_type;
             vs.index_bytes = [&]<typename... Ts>(const std::variant<Ts...>*) {
                 return lowering_detail::compute_variant_index_bytes<Ts...>();
-            }(static_cast<const variant_t*>(nullptr));
+            }(static_cast<const variant_type*>(nullptr));
 
             return schema_node{std::move(vs)};
         }(std::make_index_sequence<std::tuple_size_v<decltype(codec.codecs)>>{});

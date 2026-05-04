@@ -132,7 +132,7 @@ namespace json_detail {
         using type = typename std::decay_t<decltype(std::declval<C&>().element_codec)>::value_type;
     };
     template<typename C>
-    using element_value_type_or_void_t = typename element_value_type_or_void<C>::type;
+    using element_value_type_or_void_type = typename element_value_type_or_void<C>::type;
 } // namespace json_detail
 
 
@@ -183,26 +183,26 @@ struct json_format {
     json_type serialize(auto&& value) const
         requires requires { codec.encode(std::forward<decltype(value)>(value)); }
     {
-        using val_t = std::decay_t<value_type>;
+        using value_type_decayed = std::decay_t<value_type>;
 
         // Fundamental types (handles varints natively)
-        if constexpr (std::same_as<val_t, std::monostate>) {
+        if constexpr (std::same_as<value_type_decayed, std::monostate>) {
             return Backend::make_null();
-        } else if constexpr (std::same_as<val_t, bool>) {
+        } else if constexpr (std::same_as<value_type_decayed, bool>) {
             return Backend::make_bool(static_cast<bool>(value));
-        } else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
+        } else if constexpr (std::is_integral_v<value_type_decayed> && std::is_signed_v<value_type_decayed>) {
             return Backend::make_int(static_cast<std::int64_t>(value));
-        } else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
+        } else if constexpr (std::is_integral_v<value_type_decayed> && std::is_unsigned_v<value_type_decayed>) {
             return Backend::make_uint(static_cast<std::uint64_t>(value));
-        } else if constexpr (std::is_floating_point_v<val_t>) {
+        } else if constexpr (std::is_floating_point_v<value_type_decayed>) {
             return Backend::make_float(static_cast<double>(value));
         }
         // String types
-        else if constexpr (json_detail::is_std_string_v<val_t>) {
+        else if constexpr (json_detail::is_std_string_v<value_type_decayed>) {
             return Backend::make_string(std::string(value.begin(), value.end()));
         }
         // Optional-like (std::optional) -> null or inner
-        else if constexpr (json_detail::is_optional_like_v<val_t> &&
+        else if constexpr (json_detail::is_optional_like_v<value_type_decayed> &&
                            json_detail::HasValueCodec<C>) {
             if (!value.has_value()) return Backend::make_null();
             auto inner_codec = json_detail::get_value_codec(codec);
@@ -210,7 +210,7 @@ struct json_format {
             return inner_fmt.serialize(*std::forward<decltype(value)>(value));
         }
         // Container of string-keyed pairs -> JSON object
-        else if constexpr (json_detail::StringKeyedPairContainer<val_t> &&
+        else if constexpr (json_detail::StringKeyedPairContainer<value_type_decayed> &&
                            json_detail::HasElementCodec<C>) {
             auto elem_codec = json_detail::get_element_codec(codec);
             auto val_codec = std::get<1>(elem_codec.codec.codecs);
@@ -222,7 +222,7 @@ struct json_format {
             return obj;
         }
         // Container -> JSON array
-        else if constexpr (json_detail::NonMapContainer<val_t> &&
+        else if constexpr (json_detail::NonMapContainer<value_type_decayed> &&
                            json_detail::HasElementCodec<C>) {
             auto elem_codec = json_detail::get_element_codec(codec);
             auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
@@ -252,32 +252,32 @@ struct json_format {
      * @return Optional containing the deserialized value, or nullopt on failure
      */
     std::optional<value_type> deserialize(const json_type& node) const {
-        using val_t = std::decay_t<value_type>;
+        using value_type_decayed = std::decay_t<value_type>;
 
         // Fundamental types
-        if constexpr (std::same_as<val_t, std::monostate>) {
+        if constexpr (std::same_as<value_type_decayed, std::monostate>) {
             return std::monostate{};
-        } else if constexpr (std::same_as<val_t, bool>) {
+        } else if constexpr (std::same_as<value_type_decayed, bool>) {
             if (!Backend::is_bool(node)) return std::nullopt;
-            return static_cast<val_t>(Backend::as_bool(node));
-        } else if constexpr (std::is_integral_v<val_t> && std::is_signed_v<val_t>) {
+            return static_cast<value_type_decayed>(Backend::as_bool(node));
+        } else if constexpr (std::is_integral_v<value_type_decayed> && std::is_signed_v<value_type_decayed>) {
             if (!Backend::is_integer(node)) return std::nullopt;
-            return static_cast<val_t>(Backend::as_int64(node));
-        } else if constexpr (std::is_integral_v<val_t> && std::is_unsigned_v<val_t>) {
+            return static_cast<value_type_decayed>(Backend::as_int64(node));
+        } else if constexpr (std::is_integral_v<value_type_decayed> && std::is_unsigned_v<value_type_decayed>) {
             if (!Backend::is_integer(node) && !Backend::is_floating(node)) return std::nullopt;
-            return static_cast<val_t>(Backend::as_uint64(node));
-        } else if constexpr (std::is_floating_point_v<val_t>) {
+            return static_cast<value_type_decayed>(Backend::as_uint64(node));
+        } else if constexpr (std::is_floating_point_v<value_type_decayed>) {
             if (!Backend::is_floating(node) && !Backend::is_integer(node)) return std::nullopt;
-            return static_cast<val_t>(Backend::as_double(node));
+            return static_cast<value_type_decayed>(Backend::as_double(node));
         }
         // String types
-        else if constexpr (json_detail::is_std_string_v<val_t>) {
+        else if constexpr (json_detail::is_std_string_v<value_type_decayed>) {
             if (!Backend::is_string(node)) return std::nullopt;
             auto s = Backend::as_string(node);
-            return val_t(s.begin(), s.end());
+            return value_type_decayed(s.begin(), s.end());
         }
         // Optional-like -> null or inner
-        else if constexpr (json_detail::is_optional_like_v<val_t> &&
+        else if constexpr (json_detail::is_optional_like_v<value_type_decayed> &&
                            json_detail::HasValueCodec<C>) {
             if (Backend::is_null(node)) return value_type{std::nullopt};
             auto inner_codec = json_detail::get_value_codec(codec);
@@ -287,7 +287,7 @@ struct json_format {
             return std::nullopt;
         }
         // Container of string-keyed pairs -> from JSON object
-        else if constexpr (json_detail::StringKeyedPairContainer<val_t> &&
+        else if constexpr (json_detail::StringKeyedPairContainer<value_type_decayed> &&
                            json_detail::HasElementCodec<C>) {
             if (!Backend::is_object(node)) return std::nullopt;
             auto elem_codec = json_detail::get_element_codec(codec);
@@ -304,7 +304,7 @@ struct json_format {
             return result;
         }
         // Container -> from JSON array
-        else if constexpr (json_detail::NonMapContainer<val_t> &&
+        else if constexpr (json_detail::NonMapContainer<value_type_decayed> &&
                            json_detail::HasElementCodec<C>) {
             if (!Backend::is_array(node)) return std::nullopt;
             auto elem_codec = json_detail::get_element_codec(codec);
@@ -372,15 +372,15 @@ struct json_format {
         requires(json_detail::CharRangeHolder<value_type> &&
                  requires { codec.element_codec; })
     {
-        using char_t = typename std::decay_t<value_type>::value_type;
+        using char_type = typename std::decay_t<value_type>::value_type;
         if (!Backend::is_string(node)) return value_type{};
         std::string str = Backend::as_string(node);
-        return value_type([str = std::move(str), idx = std::size_t{0}]() mutable -> std::optional<char_t> {
+        return value_type([str = std::move(str), idx = std::size_t{0}]() mutable -> std::optional<char_type> {
             if (idx < str.size()) {
-                return static_cast<char_t>(str[idx++]);
+                return static_cast<char_type>(str[idx++]);
             } else if (idx == str.size()) {
                 idx++;
-                return char_t{};
+                return char_type{};
             }
             return std::nullopt;
         });
@@ -406,20 +406,20 @@ struct json_format {
         requires(json_detail::PairRangeHolder<value_type> &&
                  requires { codec.element_codec; codec.element_codec.codec.codecs; })
     {
-        using pair_t = typename std::decay_t<value_type>::value_type;
+        using pair_type = typename std::decay_t<value_type>::value_type;
         if (!Backend::is_object(node)) return value_type{};
         auto element_codec = codec.element_codec;
         auto val_codec = std::get<1>(element_codec.codec.codecs);
         auto val_fmt = json_format<decltype(val_codec), Backend>(val_codec);
         auto keys = Backend::object_keys(node);
         return value_type([keys = std::move(keys), idx = std::size_t{0}, &node, val_fmt]() mutable
-                              -> std::optional<pair_t> {
+                               -> std::optional<pair_type> {
             if (idx >= keys.size()) return std::nullopt;
             const auto& key = keys[idx++];
             const auto& val_node = Backend::object_get(node, key);
             auto val_opt = val_fmt.deserialize(val_node);
             if (!val_opt) return std::nullopt;
-            return pair_t{std::string(key), std::move(*val_opt)};
+            return pair_type{std::string(key), std::move(*val_opt)};
         });
     }
 
@@ -430,7 +430,7 @@ struct json_format {
                  !is_string_keyed_pair_v<typename std::decay_t<decltype(range_value)>::value_type> &&
                  requires { codec.element_codec; } &&
                  std::same_as<typename std::decay_t<decltype(range_value)>::value_type,
-                              json_detail::element_value_type_or_void_t<C> >)
+                               json_detail::element_value_type_or_void_type<C> >)
     {
         auto element_codec = codec.element_codec;
         auto next_element_codec = element_codec.next_codec();
@@ -447,15 +447,15 @@ struct json_format {
         requires(json_detail::GeneralRangeHolder<value_type> &&
                  requires { codec.element_codec; } &&
                  std::same_as<typename std::decay_t<value_type>::value_type,
-                              json_detail::element_value_type_or_void_t<C> >)
+                               json_detail::element_value_type_or_void_type<C> >)
     {
-        using elem_t = typename std::decay_t<value_type>::value_type;
+        using element_type = typename std::decay_t<value_type>::value_type;
         if (!Backend::is_array(node)) return value_type{};
         auto element_codec = codec.element_codec;
         auto next_element_codec = element_codec.next_codec();
         auto elem_fmt = json_format<decltype(next_element_codec), Backend>(next_element_codec);
         std::size_t size = Backend::array_size(node);
-        return value_type([&node, elem_fmt, element_codec, size, idx = std::size_t{0}]() mutable -> std::optional<elem_t> {
+        return value_type([&node, elem_fmt, element_codec, size, idx = std::size_t{0}]() mutable -> std::optional<element_type> {
             if (idx >= size) return std::nullopt;
             const auto& elem_node = Backend::array_at(node, idx++);
             auto encoded_opt = elem_fmt.deserialize(elem_node);
@@ -471,24 +471,24 @@ struct json_format {
     {
         // Names may live on codec.next_codec().codecs (apply_codec path) or
         // on codec.codecs directly (tuple_codec with named children, e.g. make_codec).
-        using next_codecs_tuple_t = std::decay_t<decltype(codec.next_codec().codecs)>;
+        using next_codecs_tuple_type = std::decay_t<decltype(codec.next_codec().codecs)>;
         constexpr auto seq = std::make_index_sequence<std::tuple_size_v<std::decay_t<decltype(tuple_value)>>>{};
-        if constexpr (all_named_v<next_codecs_tuple_t>) {
+        if constexpr (all_named_v<next_codecs_tuple_type>) {
             assert(!has_duplicate_names(codec.next_codec().codecs) &&
                    "json_format: duplicate member names detected in all-named tuple");
             return serialize_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
-        } else if constexpr (any_named_v<next_codecs_tuple_t>) {
+        } else if constexpr (any_named_v<next_codecs_tuple_type>) {
             assert(!has_duplicate_names(codec.next_codec().codecs) &&
                    "json_format: duplicate member names detected in mixed-named tuple");
             return serialize_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
         } else if constexpr (requires { codec.codecs; }) {
             // Self-named path: names are on current level (e.g. make_codec output)
-            using self_codecs_tuple_t = std::decay_t<decltype(codec.codecs)>;
-            if constexpr (all_named_v<self_codecs_tuple_t>) {
+            using self_codecs_tuple_type = std::decay_t<decltype(codec.codecs)>;
+            if constexpr (all_named_v<self_codecs_tuple_type>) {
                 assert(!has_duplicate_names(codec.codecs) &&
                        "json_format: duplicate member names detected in all-named tuple");
                 return serialize_self_named_object_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
-            } else if constexpr (any_named_v<self_codecs_tuple_t>) {
+            } else if constexpr (any_named_v<self_codecs_tuple_type>) {
                 assert(!has_duplicate_names(codec.codecs) &&
                        "json_format: duplicate member names detected in mixed-named tuple");
                 return serialize_self_mixed_tuple_impl(std::forward<decltype(tuple_value)>(tuple_value), seq);
@@ -505,11 +505,11 @@ struct json_format {
     {
         // In the deserialization path, codec is the tuple_codec itself,
         // so names live in codec.codecs (not codec.next_codec().codecs)
-        using codecs_tuple_t = std::decay_t<decltype(codec.codecs)>;
-        if constexpr (all_named_v<codecs_tuple_t>) {
+        using codecs_tuple_type = std::decay_t<decltype(codec.codecs)>;
+        if constexpr (all_named_v<codecs_tuple_type>) {
             if (!Backend::is_object(node)) return std::nullopt;
             return deserialize_named_object_impl(node, std::make_index_sequence<std::tuple_size_v<value_type>>{});
-        } else if constexpr (any_named_v<codecs_tuple_t>) {
+        } else if constexpr (any_named_v<codecs_tuple_type>) {
             if (!Backend::is_array(node)) return std::nullopt;
             return deserialize_mixed_tuple_impl(node, std::make_index_sequence<std::tuple_size_v<value_type>>{});
         } else {
@@ -629,16 +629,16 @@ struct json_format {
         std::string key(named_codec.member_name);
 
         auto elem_fmt = json_format<decltype(named_codec), Backend>(named_codec);
-        using elem_value_t = typename std::decay_t<decltype(named_codec)>::value_type;
+        using element_value_type = typename std::decay_t<decltype(named_codec)>::value_type;
 
         if (!Backend::object_has_key(node, key)) {
             // Key missing: check if codec (or its field_codec) has a fallback value
             if constexpr (requires { named_codec.get_fallback(); }) {
-                return std::optional<elem_value_t>{named_codec.get_fallback()};
+                return std::optional<element_value_type>{named_codec.get_fallback()};
             } else if constexpr (requires { named_codec.field_codec.get_fallback(); }) {
-                return std::optional<elem_value_t>{named_codec.field_codec.get_fallback()};
+                return std::optional<element_value_type>{named_codec.field_codec.get_fallback()};
             } else {
-                return std::optional<elem_value_t>{std::nullopt};
+                return std::optional<element_value_type>{std::nullopt};
             }
         }
         return elem_fmt.deserialize(Backend::object_get(node, key));
@@ -681,8 +681,8 @@ struct json_format {
 
     template<std::size_t I>
     void collect_member_name(std::vector<std::string>& names) const {
-        using elem_codec_t = std::tuple_element_t<I, std::decay_t<decltype(codec.codecs)>>;
-        if constexpr (has_member_name_v<elem_codec_t>) {
+        using element_codec_type = std::tuple_element_t<I, std::decay_t<decltype(codec.codecs)>>;
+        if constexpr (has_member_name_v<element_codec_type>) {
             names.emplace_back(std::get<I>(codec.codecs).member_name);
         }
     }
@@ -738,7 +738,7 @@ struct json_format {
         // Use the codec from codec.codecs (same level as serialization)
         auto elem_codec = std::get<I>(codec.codecs);
         auto elem_fmt = json_format<decltype(elem_codec), Backend>(elem_codec);
-        using elem_value_t = typename std::decay_t<decltype(elem_codec)>::value_type;
+        using element_value_type = typename std::decay_t<decltype(elem_codec)>::value_type;
 
         if constexpr (has_member_name_v<decltype(elem_codec)>) {
             // Look up by name
@@ -746,13 +746,13 @@ struct json_format {
             for (const auto& [k, v] : named_nodes) {
                 if (k == key) return elem_fmt.deserialize(v);
             }
-            return std::optional<elem_value_t>{std::nullopt};
+            return std::optional<element_value_type>{std::nullopt};
         } else {
             // Consume next positional node
             if (pos_idx < positional_nodes.size()) {
                 return elem_fmt.deserialize(positional_nodes[pos_idx++]);
             }
-            return std::optional<elem_value_t>{std::nullopt};
+            return std::optional<element_value_type>{std::nullopt};
         }
     }
 

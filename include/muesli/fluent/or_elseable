@@ -97,10 +97,10 @@ struct or_elseable {
             return muesli::or_else_codec<Derived, std::decay_t<T>>{
                 static_cast<const Derived&>(*this), std::move(fallback)};
         } else {
-            using holder_t = muesli::detail::value_holder<typename Derived::value_type>;
-            return muesli::or_else_codec<Derived, holder_t>{
+            using holder_type = muesli::detail::value_holder<typename Derived::value_type>;
+            return muesli::or_else_codec<Derived, holder_type>{
                 static_cast<const Derived&>(*this),
-                holder_t{static_cast<typename Derived::value_type>(std::move(fallback))}};
+                holder_type{static_cast<typename Derived::value_type>(std::move(fallback))}};
         }
     }
 
@@ -122,11 +122,11 @@ struct or_elseable {
      */
     template<typename... Args>
     constexpr auto or_else_make(Args&&... args) const noexcept {
-        using value_t = typename Derived::value_type;
-        using holder_t = muesli::detail::make_holder<value_t, Args...>;
-        return muesli::or_else_codec<Derived, holder_t>{
+        using value_type_local = typename Derived::value_type;
+        using holder_type = muesli::detail::make_holder<value_type_local, Args...>;
+        return muesli::or_else_codec<Derived, holder_type>{
             static_cast<const Derived&>(*this),
-            holder_t{std::tuple<std::decay_t<Args>...>{std::forward<Args>(args)...}}};
+            holder_type{std::tuple<std::decay_t<Args>...>{std::forward<Args>(args)...}}};
     }
 };
 
