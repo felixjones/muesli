@@ -126,6 +126,15 @@ if(BUILD_TESTING)
     add_muesli_test_exe(test_json_format tests/test_json_format.cpp)
     add_test(NAME test_json_format COMMAND test_json_format)
 
+    add_muesli_test_exe(test_msgpack_format tests/test_msgpack_format.cpp)
+    add_test(NAME test_msgpack_format COMMAND test_msgpack_format)
+
+    add_muesli_test_exe(test_msgpack_ext tests/test_msgpack_ext.cpp)
+    add_test(NAME test_msgpack_ext COMMAND test_msgpack_ext)
+
+    add_muesli_test_exe(test_msgpack_timestamp_ext tests/test_msgpack_timestamp_ext.cpp)
+    add_test(NAME test_msgpack_timestamp_ext COMMAND test_msgpack_timestamp_ext)
+
     include(FetchContent)
 
     # nlohmann/json
@@ -259,6 +268,9 @@ if(BUILD_EXAMPLES)
 
     add_executable(example_03 examples/example_03.cpp)
     target_link_libraries(example_03 PRIVATE muesli)
+
+    add_executable(example_04 examples/example_04.cpp)
+    target_link_libraries(example_04 PRIVATE muesli)
 endif()
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include)

@@ -1,0 +1,117 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/format/msgpack_format>
+
+#include <array>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <span>
+
+namespace muesli {
+
+namespace msgpack_detail {
+
+    template<typename UInt>
+    constexpr void write_be(UInt value, std::byte* out) {
+        static_assert(std::unsigned_integral<UInt>);
+        for (std::size_t i = 0; i < sizeof(UInt); ++i) {
+            const auto shift = static_cast<unsigned>((sizeof(UInt) - 1 - i) * 8);
+            out[i] = static_cast<std::byte>((value >> shift) & UInt{0xFF});
+        }
+    }
+
+    template<typename UInt>
+    constexpr UInt read_be(std::span<const std::byte> data) {
+        static_assert(std::unsigned_integral<UInt>);
+        UInt value{};
+        for (std::size_t i = 0; i < sizeof(UInt); ++i) {
+            value = static_cast<UInt>((value << 8) | static_cast<UInt>(std::to_integer<std::uint8_t>(data[i])));
+        }
+        return value;
+    }
+
+} // namespace msgpack_detail
+
+/**
+ * @brief Creates a MessagePack Timestamp extension codec (type -1).
+ *
+ * The codec serializes `std::chrono::sys_time<Duration>` values using the
+ * MessagePack Timestamp extension's 32-bit, 64-bit, and 96-bit payload forms.
+ *
+ * @tparam Duration Chrono duration used by the returned time_point value type.
+ * @return Codec compatible with `make_msgpack_format`.
+ */
+template<typename Duration = std::chrono::nanoseconds>
+constexpr auto make_msgpack_timestamp_ext_codec() {
+    using ns_time_point = std::chrono::sys_time<std::chrono::nanoseconds>;
+    using value_type = std::chrono::sys_time<Duration>;
+
+    return make_msgpack_ext_codec<value_type>(
+        std::int8_t{-1},
+        [](const value_type& value) -> msgpack_ext_payload {
+            const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(value.time_since_epoch());
+            const auto whole_seconds = std::chrono::floor<std::chrono::seconds>(nanos);
+            const auto nanoseconds = nanos - whole_seconds;
+            const auto sec = whole_seconds.count();
+            const auto nsec = static_cast<std::uint32_t>(nanoseconds.count());
+
+            const bool fits_32 = nsec == 0 && sec >= 0 &&
+                                 sec <= static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max());
+            if (fits_32) {
+                std::array<std::byte, 4> payload{};
+                msgpack_detail::write_be(static_cast<std::uint32_t>(sec), payload.data());
+                return msgpack_ext_payload(std::move(payload));
+            }
+
+            const bool fits_64 = sec >= 0 && sec <= static_cast<std::int64_t>(0x3'FFFF'FFFFull);
+            if (fits_64) {
+                std::array<std::byte, 8> payload{};
+                const auto packed = (static_cast<std::uint64_t>(nsec) << 34u) |
+                                    static_cast<std::uint64_t>(sec);
+                msgpack_detail::write_be(packed, payload.data());
+                return msgpack_ext_payload(std::move(payload));
+            }
+
+            std::array<std::byte, 12> payload{};
+            msgpack_detail::write_be(static_cast<std::uint32_t>(nsec), payload.data());
+            msgpack_detail::write_be(static_cast<std::uint64_t>(sec), payload.data() + 4);
+            return msgpack_ext_payload(std::move(payload));
+        },
+        [](std::span<const std::byte> payload) -> std::optional<value_type> {
+            std::int64_t sec = 0;
+            std::uint32_t nsec = 0;
+
+            if (payload.size() == 4) {
+                sec = static_cast<std::int64_t>(msgpack_detail::read_be<std::uint32_t>(payload));
+            } else if (payload.size() == 8) {
+                const auto packed = msgpack_detail::read_be<std::uint64_t>(payload);
+                nsec = static_cast<std::uint32_t>(packed >> 34u);
+                sec = static_cast<std::int64_t>(packed & 0x3'FFFF'FFFFull);
+            } else if (payload.size() == 12) {
+                nsec = msgpack_detail::read_be<std::uint32_t>(payload.subspan(0, 4));
+                const auto sec_bits = msgpack_detail::read_be<std::uint64_t>(payload.subspan(4, 8));
+                sec = static_cast<std::int64_t>(sec_bits);
+            } else {
+                return std::nullopt;
+            }
+
+            if (nsec > 999'999'999u) return std::nullopt;
+
+            const ns_time_point as_ns{
+                std::chrono::seconds{sec} + std::chrono::nanoseconds{nsec}
+            };
+            return std::chrono::time_point_cast<Duration>(as_ns);
+        });
+}
+
+} // namespace muesli
+

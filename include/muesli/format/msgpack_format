@@ -1,0 +1,1373 @@
+/*
+ * BSD 3-Clause License
+ * Copyright (c) 2026, Felix Jones
+ * See LICENSE file for details.
+ */
+
+#pragma once
+
+#include <muesli/util/concepts>
+#include <muesli/util/range_holder>
+#include <muesli/util/type_traits>
+
+#include <array>
+#include <bit>
+#include <cassert>
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <optional>
+#include <ranges>
+#include <span>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace muesli {
+
+namespace msgpack_detail {
+
+    inline constexpr std::uint8_t nil = 0xC0;
+    inline constexpr std::uint8_t false_value = 0xC2;
+    inline constexpr std::uint8_t true_value = 0xC3;
+    inline constexpr std::uint8_t bin8 = 0xC4;
+    inline constexpr std::uint8_t bin16 = 0xC5;
+    inline constexpr std::uint8_t bin32 = 0xC6;
+    inline constexpr std::uint8_t ext8 = 0xC7;
+    inline constexpr std::uint8_t ext16 = 0xC8;
+    inline constexpr std::uint8_t ext32 = 0xC9;
+    inline constexpr std::uint8_t float32 = 0xCA;
+    inline constexpr std::uint8_t float64 = 0xCB;
+    inline constexpr std::uint8_t uint8 = 0xCC;
+    inline constexpr std::uint8_t uint16 = 0xCD;
+    inline constexpr std::uint8_t uint32 = 0xCE;
+    inline constexpr std::uint8_t uint64 = 0xCF;
+    inline constexpr std::uint8_t int8 = 0xD0;
+    inline constexpr std::uint8_t int16 = 0xD1;
+    inline constexpr std::uint8_t int32 = 0xD2;
+    inline constexpr std::uint8_t int64 = 0xD3;
+    inline constexpr std::uint8_t fixext1 = 0xD4;
+    inline constexpr std::uint8_t fixext2 = 0xD5;
+    inline constexpr std::uint8_t fixext4 = 0xD6;
+    inline constexpr std::uint8_t fixext8 = 0xD7;
+    inline constexpr std::uint8_t fixext16 = 0xD8;
+    inline constexpr std::uint8_t str8 = 0xD9;
+    inline constexpr std::uint8_t str16 = 0xDA;
+    inline constexpr std::uint8_t str32 = 0xDB;
+    inline constexpr std::uint8_t array16 = 0xDC;
+    inline constexpr std::uint8_t array32 = 0xDD;
+    inline constexpr std::uint8_t map16 = 0xDE;
+    inline constexpr std::uint8_t map32 = 0xDF;
+
+    template<typename T> struct is_std_string : std::false_type {};
+    template<typename C, typename Tr, typename A>
+    struct is_std_string<std::basic_string<C, Tr, A>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_std_string_v = is_std_string<std::decay_t<T>>::value;
+
+    template<typename T> struct is_std_array : std::false_type {};
+    template<typename T, std::size_t N> struct is_std_array<std::array<T, N>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_std_array_v = is_std_array<std::decay_t<T>>::value;
+
+    template<typename T> struct is_char_type : std::false_type {};
+    template<> struct is_char_type<char> : std::true_type {};
+    template<> struct is_char_type<signed char> : std::true_type {};
+    template<> struct is_char_type<unsigned char> : std::true_type {};
+    template<> struct is_char_type<wchar_t> : std::true_type {};
+    template<> struct is_char_type<char8_t> : std::true_type {};
+    template<> struct is_char_type<char16_t> : std::true_type {};
+    template<> struct is_char_type<char32_t> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_char_type_v = is_char_type<std::decay_t<T>>::value;
+
+    template<typename T>
+    struct is_binary_element
+        : std::bool_constant<std::same_as<std::decay_t<T>, std::byte> ||
+                             std::same_as<std::decay_t<T>, std::uint8_t>> {};
+    template<typename T>
+    inline constexpr bool is_binary_element_v = is_binary_element<T>::value;
+
+    template<typename T> struct is_pair : std::false_type {};
+    template<typename K, typename V> struct is_pair<std::pair<K, V>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_pair_v = is_pair<std::decay_t<T>>::value;
+
+    template<typename T> struct is_string_keyed_pair : std::false_type {};
+    template<typename V> struct is_string_keyed_pair<std::pair<std::string, V>> : std::true_type {};
+    template<typename V> struct is_string_keyed_pair<std::pair<const std::string, V>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_string_keyed_pair_v = is_string_keyed_pair<std::decay_t<T>>::value;
+
+    template<typename T, typename = void>
+    struct is_sized_container : std::false_type {};
+    template<typename T>
+    struct is_sized_container<T, std::void_t<decltype(std::declval<const T&>().begin()),
+                                            decltype(std::declval<const T&>().end()),
+                                            decltype(std::declval<const T&>().size())>>
+        : std::bool_constant<!is_std_string_v<T>> {};
+    template<typename T>
+    inline constexpr bool is_sized_container_v = is_sized_container<std::decay_t<T>>::value;
+
+    template<typename T>
+    concept StringKeyedPairContainer = is_sized_container_v<std::decay_t<T>> &&
+        requires { typename std::decay_t<T>::value_type; } &&
+        is_string_keyed_pair_v<typename std::decay_t<T>::value_type>;
+
+    template<typename T>
+    concept NonMapContainer = is_sized_container_v<std::decay_t<T>> && !StringKeyedPairContainer<T>;
+
+    template<typename T, typename = void>
+    struct is_optional_like : std::false_type {};
+    template<typename T>
+    struct is_optional_like<T, std::void_t<decltype(std::declval<const T&>().has_value()),
+                                          decltype(*std::declval<const T&>())>> : std::true_type {};
+    template<typename T>
+    inline constexpr bool is_optional_like_v = is_optional_like<std::decay_t<T>>::value;
+
+    template<typename Codec>
+    constexpr auto get_element_codec(const Codec& c) {
+        if constexpr (requires { c.element_codec; }) {
+            return c.element_codec;
+        } else if constexpr (requires { c.arg_codec.element_codec; }) {
+            return c.arg_codec.element_codec;
+        } else if constexpr (requires { c.get_element_codec(); }) {
+            return c.get_element_codec();
+        }
+    }
+
+    template<typename Codec>
+    constexpr auto get_value_codec(const Codec& c) {
+        if constexpr (requires { c.value_codec; }) {
+            return c.value_codec;
+        } else if constexpr (requires { c.arg_codec.value_codec; }) {
+            return c.arg_codec.value_codec;
+        } else if constexpr (requires { c.get_value_codec(); }) {
+            return c.get_value_codec();
+        }
+    }
+
+    template<typename Codec>
+    concept HasElementCodec = requires(const Codec& c) { c.element_codec; } ||
+                              requires(const Codec& c) { c.arg_codec.element_codec; } ||
+                              requires(const Codec& c) { c.get_element_codec(); };
+
+    template<typename Codec>
+    concept HasValueCodec = requires(const Codec& c) { c.value_codec; } ||
+                            requires(const Codec& c) { c.arg_codec.value_codec; } ||
+                            requires(const Codec& c) { c.get_value_codec(); };
+
+    template<typename C, typename = void>
+    struct element_value_type_or_void { using type = void; };
+    template<typename C>
+    struct element_value_type_or_void<C, std::void_t<decltype(std::declval<C&>().element_codec)>> {
+        using type = typename std::decay_t<decltype(std::declval<C&>().element_codec)>::value_type;
+    };
+    template<typename C>
+    using element_value_type_or_void_t = typename element_value_type_or_void<C>::type;
+
+    template<typename C, typename = void>
+    struct codecs_tuple_or_void {
+        using type = void;
+    };
+    template<typename C>
+    struct codecs_tuple_or_void<C, std::void_t<decltype(std::declval<const C&>().codecs)>> {
+        using type = std::decay_t<decltype(std::declval<const C&>().codecs)>;
+    };
+    template<typename C>
+    using codecs_tuple_or_void_t = typename codecs_tuple_or_void<C>::type;
+    template<typename C>
+    inline constexpr bool has_codecs_v = !std::same_as<codecs_tuple_or_void_t<C>, void>;
+
+    template<typename C, typename = void>
+    struct all_codecs_named : std::false_type {};
+    template<typename C>
+    struct all_codecs_named<C, std::void_t<decltype(std::declval<const C&>().codecs)>>
+        : std::bool_constant<all_named_v<codecs_tuple_or_void_t<C>>> {};
+    template<typename C>
+    inline constexpr bool all_codecs_named_v = all_codecs_named<C>::value;
+
+    template<typename Stream>
+    bool write_byte(Stream& output, std::uint8_t value) {
+        const auto c = static_cast<char>(value);
+        if constexpr (requires { output.write(&c, std::streamsize{1}); }) {
+            output.write(&c, std::streamsize{1});
+            if constexpr (requires { output.good(); }) return output.good();
+            else return true;
+        } else if constexpr (requires { output.put(c); }) {
+            output.put(c);
+            if constexpr (requires { output.good(); }) return output.good();
+            else return true;
+        } else if constexpr (requires { output << c; }) {
+            output << c;
+            if constexpr (requires { output.good(); }) return output.good();
+            else return true;
+        } else {
+            static_assert(sizeof(Stream) == 0, "msgpack_format: unsupported output stream");
+        }
+    }
+
+    template<typename Stream>
+    std::optional<std::uint8_t> read_byte(Stream& input) {
+        char c{};
+        if constexpr (requires { input.read(&c, std::streamsize{1}); }) {
+            input.read(&c, std::streamsize{1});
+            if constexpr (requires { input.gcount(); }) {
+                if (input.gcount() != std::streamsize{1}) return std::nullopt;
+            } else if constexpr (requires { input.good(); }) {
+                if (!input.good()) return std::nullopt;
+            }
+            return static_cast<std::uint8_t>(static_cast<unsigned char>(c));
+        } else if constexpr (requires { input.get(c); }) {
+            input.get(c);
+            if constexpr (requires { input.good(); }) {
+                if (!input.good()) return std::nullopt;
+            }
+            return static_cast<std::uint8_t>(static_cast<unsigned char>(c));
+        } else {
+            static_assert(sizeof(Stream) == 0, "msgpack_format: unsupported input stream");
+        }
+    }
+
+    template<typename Stream>
+    bool write_raw(Stream& output, const char* data, std::size_t size) {
+        if (size == 0) return true;
+        if constexpr (requires { output.write(data, static_cast<std::streamsize>(size)); }) {
+            output.write(data, static_cast<std::streamsize>(size));
+            if constexpr (requires { output.good(); }) return output.good();
+            else return true;
+        } else {
+            for (std::size_t i = 0; i < size; ++i) {
+                if (!write_byte(output, static_cast<std::uint8_t>(data[i]))) return false;
+            }
+            return true;
+        }
+    }
+
+    template<typename Stream>
+    std::optional<std::string> read_raw(Stream& input, std::size_t size) {
+        std::string result(size, '\0');
+        if (size == 0) return result;
+        if constexpr (requires { input.read(result.data(), static_cast<std::streamsize>(size)); }) {
+            input.read(result.data(), static_cast<std::streamsize>(size));
+            if constexpr (requires { input.gcount(); }) {
+                if (input.gcount() != static_cast<std::streamsize>(size)) return std::nullopt;
+            } else if constexpr (requires { input.good(); }) {
+                if (!input.good()) return std::nullopt;
+            }
+            return result;
+        } else {
+            for (std::size_t i = 0; i < size; ++i) {
+                auto byte = read_byte(input);
+                if (!byte) return std::nullopt;
+                result[i] = static_cast<char>(*byte);
+            }
+            return result;
+        }
+    }
+
+    template<typename UInt, typename Stream>
+    bool write_be(Stream& output, UInt value) {
+        static_assert(std::unsigned_integral<UInt>);
+        for (std::size_t i = 0; i < sizeof(UInt); ++i) {
+            const auto shift = static_cast<unsigned>((sizeof(UInt) - 1 - i) * 8);
+            if (!write_byte(output, static_cast<std::uint8_t>((value >> shift) & UInt{0xFF}))) return false;
+        }
+        return true;
+    }
+
+    template<typename UInt, typename Stream>
+    std::optional<UInt> read_be(Stream& input) {
+        static_assert(std::unsigned_integral<UInt>);
+        UInt result{};
+        for (std::size_t i = 0; i < sizeof(UInt); ++i) {
+            auto byte = read_byte(input);
+            if (!byte) return std::nullopt;
+            result = static_cast<UInt>((result << 8) | static_cast<UInt>(*byte));
+        }
+        return result;
+    }
+
+    template<typename Stream>
+    bool write_string_header(Stream& output, std::size_t size) {
+        if (size <= 31) {
+            return write_byte(output, static_cast<std::uint8_t>(0xA0 | size));
+        }
+        if (size <= std::numeric_limits<std::uint8_t>::max()) {
+            return write_byte(output, str8) && write_byte(output, static_cast<std::uint8_t>(size));
+        }
+        if (size <= std::numeric_limits<std::uint16_t>::max()) {
+            return write_byte(output, str16) && write_be(output, static_cast<std::uint16_t>(size));
+        }
+        return write_byte(output, str32) && write_be(output, static_cast<std::uint32_t>(size));
+    }
+
+    template<typename Stream>
+    bool write_array_header(Stream& output, std::size_t size) {
+        if (size <= 15) {
+            return write_byte(output, static_cast<std::uint8_t>(0x90 | size));
+        }
+        if (size <= std::numeric_limits<std::uint16_t>::max()) {
+            return write_byte(output, array16) && write_be(output, static_cast<std::uint16_t>(size));
+        }
+        return write_byte(output, array32) && write_be(output, static_cast<std::uint32_t>(size));
+    }
+
+    template<typename Stream>
+    bool write_map_header(Stream& output, std::size_t size) {
+        if (size <= 15) {
+            return write_byte(output, static_cast<std::uint8_t>(0x80 | size));
+        }
+        if (size <= std::numeric_limits<std::uint16_t>::max()) {
+            return write_byte(output, map16) && write_be(output, static_cast<std::uint16_t>(size));
+        }
+        return write_byte(output, map32) && write_be(output, static_cast<std::uint32_t>(size));
+    }
+
+    template<typename Stream>
+    bool write_bin_header(Stream& output, std::size_t size) {
+        if (size <= std::numeric_limits<std::uint8_t>::max()) {
+            return write_byte(output, bin8) && write_byte(output, static_cast<std::uint8_t>(size));
+        }
+        if (size <= std::numeric_limits<std::uint16_t>::max()) {
+            return write_byte(output, bin16) && write_be(output, static_cast<std::uint16_t>(size));
+        }
+        return write_byte(output, bin32) && write_be(output, static_cast<std::uint32_t>(size));
+    }
+
+    template<typename Stream>
+    bool write_ext_header(Stream& output, std::size_t size, std::int8_t type_id) {
+        if (size == 1) return write_byte(output, fixext1) && write_byte(output, static_cast<std::uint8_t>(type_id));
+        if (size == 2) return write_byte(output, fixext2) && write_byte(output, static_cast<std::uint8_t>(type_id));
+        if (size == 4) return write_byte(output, fixext4) && write_byte(output, static_cast<std::uint8_t>(type_id));
+        if (size == 8) return write_byte(output, fixext8) && write_byte(output, static_cast<std::uint8_t>(type_id));
+        if (size == 16) return write_byte(output, fixext16) && write_byte(output, static_cast<std::uint8_t>(type_id));
+        if (size <= std::numeric_limits<std::uint8_t>::max()) {
+            return write_byte(output, ext8) && write_byte(output, static_cast<std::uint8_t>(size)) &&
+                   write_byte(output, static_cast<std::uint8_t>(type_id));
+        }
+        if (size <= std::numeric_limits<std::uint16_t>::max()) {
+            return write_byte(output, ext16) && write_be(output, static_cast<std::uint16_t>(size)) &&
+                   write_byte(output, static_cast<std::uint8_t>(type_id));
+        }
+        return write_byte(output, ext32) && write_be(output, static_cast<std::uint32_t>(size)) &&
+               write_byte(output, static_cast<std::uint8_t>(type_id));
+    }
+
+    template<typename Stream>
+    std::optional<std::pair<std::size_t, std::int8_t>> read_ext_header(Stream& input, std::uint8_t marker) {
+        if (marker == fixext1 || marker == fixext2 || marker == fixext4 || marker == fixext8 || marker == fixext16) {
+            std::size_t size = 0;
+            if (marker == fixext1) size = 1;
+            if (marker == fixext2) size = 2;
+            if (marker == fixext4) size = 4;
+            if (marker == fixext8) size = 8;
+            if (marker == fixext16) size = 16;
+            auto type_byte = read_byte(input);
+            if (!type_byte) return std::nullopt;
+            return std::pair<std::size_t, std::int8_t>{size, static_cast<std::int8_t>(*type_byte)};
+        }
+        if (marker == ext8) {
+            auto size = read_byte(input);
+            auto type_byte = read_byte(input);
+            if (!size || !type_byte) return std::nullopt;
+            return std::pair<std::size_t, std::int8_t>{*size, static_cast<std::int8_t>(*type_byte)};
+        }
+        if (marker == ext16) {
+            auto size = read_be<std::uint16_t>(input);
+            auto type_byte = read_byte(input);
+            if (!size || !type_byte) return std::nullopt;
+            return std::pair<std::size_t, std::int8_t>{*size, static_cast<std::int8_t>(*type_byte)};
+        }
+        if (marker == ext32) {
+            auto size = read_be<std::uint32_t>(input);
+            auto type_byte = read_byte(input);
+            if (!size || !type_byte) return std::nullopt;
+            return std::pair<std::size_t, std::int8_t>{*size, static_cast<std::int8_t>(*type_byte)};
+        }
+        return std::nullopt;
+    }
+
+    template<typename Stream>
+    bool write_string(Stream& output, std::string_view value) {
+        return write_string_header(output, value.size()) && write_raw(output, value.data(), value.size());
+    }
+
+    template<typename Stream>
+    std::optional<std::size_t> read_string_size(Stream& input, std::uint8_t marker) {
+        if ((marker & 0xE0) == 0xA0) return static_cast<std::size_t>(marker & 0x1F);
+        if (marker == str8) {
+            auto size = read_byte(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == str16) {
+            auto size = read_be<std::uint16_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == str32) {
+            auto size = read_be<std::uint32_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        return std::nullopt;
+    }
+
+    template<typename Stream>
+    std::optional<std::string> read_string(Stream& input, std::uint8_t marker) {
+        auto size = read_string_size(input, marker);
+        if (!size) return std::nullopt;
+        return read_raw(input, *size);
+    }
+
+    template<typename Stream>
+    std::optional<std::size_t> read_array_size(Stream& input, std::uint8_t marker) {
+        if ((marker & 0xF0) == 0x90) return static_cast<std::size_t>(marker & 0x0F);
+        if (marker == array16) {
+            auto size = read_be<std::uint16_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == array32) {
+            auto size = read_be<std::uint32_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        return std::nullopt;
+    }
+
+    template<typename Stream>
+    std::optional<std::size_t> read_map_size(Stream& input, std::uint8_t marker) {
+        if ((marker & 0xF0) == 0x80) return static_cast<std::size_t>(marker & 0x0F);
+        if (marker == map16) {
+            auto size = read_be<std::uint16_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == map32) {
+            auto size = read_be<std::uint32_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        return std::nullopt;
+    }
+
+    template<typename Stream>
+    std::optional<std::size_t> read_bin_size(Stream& input, std::uint8_t marker) {
+        if (marker == bin8) {
+            auto size = read_byte(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == bin16) {
+            auto size = read_be<std::uint16_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        if (marker == bin32) {
+            auto size = read_be<std::uint32_t>(input);
+            if (!size) return std::nullopt;
+            return static_cast<std::size_t>(*size);
+        }
+        return std::nullopt;
+    }
+
+    template<typename Stream>
+    bool skip_value(Stream& input);
+
+    template<typename Stream>
+    bool skip_raw_payload(Stream& input, std::size_t size) {
+        return read_raw(input, size).has_value();
+    }
+
+    template<typename Stream>
+    bool skip_value_with_marker(Stream& input, std::uint8_t marker) {
+        if (marker <= 0x7F || marker >= 0xE0 || marker == nil || marker == false_value || marker == true_value) {
+            return true;
+        }
+        if ((marker & 0xE0) == 0xA0) return skip_raw_payload(input, marker & 0x1F);
+        if ((marker & 0xF0) == 0x90) {
+            for (std::size_t i = 0; i < (marker & 0x0F); ++i) if (!skip_value(input)) return false;
+            return true;
+        }
+        if ((marker & 0xF0) == 0x80) {
+            for (std::size_t i = 0; i < (marker & 0x0F); ++i) {
+                if (!skip_value(input) || !skip_value(input)) return false;
+            }
+            return true;
+        }
+
+        switch (marker) {
+        case uint8: case int8: return skip_raw_payload(input, 1);
+        case uint16: case int16: return skip_raw_payload(input, 2);
+        case uint32: case int32: case float32: return skip_raw_payload(input, 4);
+        case uint64: case int64: case float64: return skip_raw_payload(input, 8);
+        case str8: case bin8: {
+            auto size = read_byte(input);
+            return size && skip_raw_payload(input, *size);
+        }
+        case ext8: {
+            auto size = read_byte(input);
+            return size && skip_raw_payload(input, static_cast<std::size_t>(*size) + 1);
+        }
+        case str16: case bin16: {
+            auto size = read_be<std::uint16_t>(input);
+            return size && skip_raw_payload(input, *size);
+        }
+        case ext16: {
+            auto size = read_be<std::uint16_t>(input);
+            return size && skip_raw_payload(input, static_cast<std::size_t>(*size) + 1);
+        }
+        case str32: case bin32: {
+            auto size = read_be<std::uint32_t>(input);
+            return size && skip_raw_payload(input, *size);
+        }
+        case ext32: {
+            auto size = read_be<std::uint32_t>(input);
+            return size && skip_raw_payload(input, static_cast<std::size_t>(*size) + 1);
+        }
+        case fixext1: return skip_raw_payload(input, 2);
+        case fixext2: return skip_raw_payload(input, 3);
+        case fixext4: return skip_raw_payload(input, 5);
+        case fixext8: return skip_raw_payload(input, 9);
+        case fixext16: return skip_raw_payload(input, 17);
+        default: return false;
+        }
+    }
+
+    template<typename Stream>
+    bool skip_value(Stream& input) {
+        auto marker = read_byte(input);
+        return marker && skip_value_with_marker(input, *marker);
+    }
+
+    template<typename T>
+    std::optional<T> checked_signed(std::int64_t value) {
+        if (value < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
+            value > static_cast<std::int64_t>(std::numeric_limits<T>::max())) {
+            return std::nullopt;
+        }
+        return static_cast<T>(value);
+    }
+
+    template<typename T>
+    std::optional<T> checked_unsigned(std::uint64_t value) {
+        if (value > static_cast<std::uint64_t>(std::numeric_limits<T>::max())) {
+            return std::nullopt;
+        }
+        return static_cast<T>(value);
+    }
+
+    template<typename T>
+    constexpr std::uint8_t to_u8(T value) {
+        using v_t = std::decay_t<T>;
+        if constexpr (std::same_as<v_t, std::byte>) {
+            return std::to_integer<std::uint8_t>(value);
+        } else {
+            return static_cast<std::uint8_t>(value);
+        }
+    }
+
+} // namespace msgpack_detail
+
+/**
+ * @brief Sized MessagePack extension payload backed by a byte range.
+ */
+struct msgpack_ext_payload {
+    std::size_t size{};
+    range_holder<std::byte> bytes;
+
+    template<std::ranges::range R>
+    requires std::same_as<std::ranges::range_value_t<R>, std::byte> && std::ranges::sized_range<R>
+    explicit msgpack_ext_payload(R&& r)
+        : size(static_cast<std::size_t>(std::ranges::size(r))),
+          bytes(range_holder<std::byte>(std::forward<R>(r))) {}
+};
+
+/**
+ * @category Built-in Codecs
+ * @brief Codec adapter for MessagePack extension values.
+ *
+ * @tparam T Extension value type.
+ * @tparam Encoder Callable that produces a byte payload.
+ * @tparam Decoder Callable that parses payload bytes.
+ */
+template<typename T, typename Encoder, typename Decoder>
+struct msgpack_ext_codec {
+    using value_type = T;
+
+    std::int8_t ext_type_id;
+    Encoder encoder;
+    Decoder decoder;
+
+    constexpr const msgpack_ext_codec& next_codec() const noexcept {
+        return *this;
+    }
+
+    constexpr value_type&& encode(value_type&& value) const noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    constexpr const value_type& encode(const value_type& value) const noexcept {
+        return value;
+    }
+
+    constexpr value_type&& decode(value_type&& value) const noexcept {
+        return std::forward<value_type>(value);
+    }
+
+    constexpr const value_type& decode(const value_type& value) const noexcept {
+        return value;
+    }
+};
+
+template<typename T>
+struct is_msgpack_ext_codec : std::false_type {};
+
+template<typename T, typename Encoder, typename Decoder>
+struct is_msgpack_ext_codec<msgpack_ext_codec<T, Encoder, Decoder>> : std::true_type {};
+
+template<typename T>
+inline constexpr bool is_msgpack_ext_codec_v = is_msgpack_ext_codec<std::decay_t<T>>::value;
+
+template<typename T>
+inline constexpr bool is_msgpack_ext_payload_v = std::same_as<std::decay_t<T>, msgpack_ext_payload>;
+
+template<typename T, typename Encoder, typename Decoder>
+constexpr auto make_msgpack_ext_codec(std::int8_t type_id, Encoder&& encoder, Decoder&& decoder) {
+    return msgpack_ext_codec<T, std::decay_t<Encoder>, std::decay_t<Decoder>>{
+        type_id,
+        std::forward<Encoder>(encoder),
+        std::forward<Decoder>(decoder)
+    };
+}
+
+/**
+ * @category Format Classes
+ * @brief MessagePack serialization format for encoding/decoding codec values.
+ */
+template<typename C, typename ByteT = std::byte>
+struct msgpack_format {
+    static_assert(Codec<C>, "C must satisfy the Codec concept");
+    static_assert(sizeof(ByteT) == sizeof(std::byte), "ByteT must be same size as std::byte");
+
+    using value_type = typename std::decay_t<C>::value_type;
+
+    C codec;
+
+    constexpr explicit msgpack_format(Codec auto c) : codec{c} {}
+
+    template<typename, typename>
+    friend struct msgpack_format;
+
+    /**
+     * @brief Serializes a single value to a MessagePack byte output stream.
+     * @param value The value to serialize.
+     * @param output Byte stream to write encoded data to.
+     * @return true when serialization succeeds; false otherwise.
+     */
+    template<typename ByteStream>
+    bool serialize(auto&& value, ByteStream& output) const
+        requires requires { codec.encode(std::forward<decltype(value)>(value)); }
+    {
+        using val_t = std::decay_t<value_type>;
+        if constexpr (is_native_value<val_t>()) {
+            return serialize_native(std::forward<decltype(value)>(value), output);
+        } else {
+            using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+            auto encoded_value = codec.encode(std::forward<decltype(value)>(value));
+            auto next_fmt = msgpack_format<next_codec_type, ByteT>(codec.next_codec());
+            return next_fmt.serialize(std::move(encoded_value), output);
+        }
+    }
+
+    /**
+     * @brief Deserializes a single value from a MessagePack byte input stream.
+     * @param input Byte stream to read encoded data from.
+     * @return Optional containing the decoded value, or nullopt on failure.
+     */
+    template<typename ByteStream>
+    std::optional<value_type> deserialize(ByteStream& input) const {
+        auto marker = msgpack_detail::read_byte(input);
+        if (!marker) return std::nullopt;
+        return deserialize_with_marker(*marker, input);
+    }
+
+  private:
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_with_marker(std::uint8_t marker, ByteStream& input) const {
+        using val_t = std::decay_t<value_type>;
+        if constexpr (is_native_value<val_t>()) {
+            return deserialize_native(marker, input);
+        } else {
+            using next_codec_type = std::decay_t<decltype(codec.next_codec())>;
+            auto next_codec = codec.next_codec();
+            auto next_fmt = msgpack_format<next_codec_type, ByteT>(next_codec);
+            if (auto encoded = next_fmt.deserialize_with_marker(marker, input)) {
+                try {
+                    return codec.decode(std::move(*encoded));
+                } catch (...) {
+                    return std::nullopt;
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+    template<typename T>
+    static consteval bool is_native_value() {
+        return std::same_as<T, std::monostate> || std::same_as<T, bool> ||
+               (std::integral<T> && !std::same_as<T, bool>) || std::floating_point<T> ||
+               is_msgpack_ext_codec_v<C> ||
+               msgpack_detail::is_std_string_v<T> ||
+               (msgpack_detail::is_optional_like_v<T> && msgpack_detail::HasValueCodec<C>) ||
+               (msgpack_detail::StringKeyedPairContainer<T> && msgpack_detail::HasElementCodec<C>) ||
+               (msgpack_detail::NonMapContainer<T> && msgpack_detail::HasElementCodec<C>) ||
+               (is_tuple_v<T> && msgpack_detail::has_codecs_v<C>) ||
+               (is_variant_v<T> && msgpack_detail::has_codecs_v<C>) ||
+               (is_range_holder_v<T> && msgpack_detail::HasElementCodec<C>);
+    }
+
+    template<typename ByteStream>
+    bool serialize_native(auto&& value, ByteStream& output) const {
+        using val_t = std::decay_t<decltype(value)>;
+        if constexpr (is_msgpack_ext_codec_v<C>) {
+            return serialize_ext(value, output);
+        } else if constexpr (std::same_as<val_t, std::monostate>) {
+            return msgpack_detail::write_byte(output, msgpack_detail::nil);
+        } else if constexpr (std::same_as<val_t, bool>) {
+            return msgpack_detail::write_byte(output,
+                                              value ? msgpack_detail::true_value : msgpack_detail::false_value);
+        } else if constexpr (std::signed_integral<val_t> && !std::same_as<val_t, bool>) {
+            return serialize_signed(static_cast<std::int64_t>(value), output);
+        } else if constexpr (std::unsigned_integral<val_t> && !std::same_as<val_t, bool>) {
+            return serialize_unsigned(static_cast<std::uint64_t>(value), output);
+        } else if constexpr (std::same_as<val_t, float>) {
+            auto bits = std::bit_cast<std::uint32_t>(value);
+            return msgpack_detail::write_byte(output, msgpack_detail::float32) &&
+                   msgpack_detail::write_be(output, bits);
+        } else if constexpr (std::same_as<val_t, double>) {
+            auto bits = std::bit_cast<std::uint64_t>(value);
+            return msgpack_detail::write_byte(output, msgpack_detail::float64) &&
+                   msgpack_detail::write_be(output, bits);
+        } else if constexpr (msgpack_detail::is_std_string_v<val_t>) {
+            std::string str(value.begin(), value.end());
+            return msgpack_detail::write_string(output, str);
+        } else if constexpr (msgpack_detail::is_optional_like_v<val_t> && msgpack_detail::HasValueCodec<C>) {
+            if (!value.has_value()) return msgpack_detail::write_byte(output, msgpack_detail::nil);
+            auto inner_codec = msgpack_detail::get_value_codec(codec);
+            auto inner_fmt = msgpack_format<decltype(inner_codec), ByteT>(inner_codec);
+            return inner_fmt.serialize(*std::forward<decltype(value)>(value), output);
+        } else if constexpr (msgpack_detail::StringKeyedPairContainer<val_t> && msgpack_detail::HasElementCodec<C>) {
+            auto elem_codec = msgpack_detail::get_element_codec(codec);
+            auto val_codec = std::get<1>(elem_codec.codec.codecs);
+            auto val_fmt = msgpack_format<decltype(val_codec), ByteT>(val_codec);
+            if (!msgpack_detail::write_map_header(output, value.size())) return false;
+            for (const auto& [k, v] : value) {
+                if (!msgpack_detail::write_string(output, std::string(k))) return false;
+                if (!val_fmt.serialize(v, output)) return false;
+            }
+            return true;
+        } else if constexpr (msgpack_detail::NonMapContainer<val_t> && msgpack_detail::HasElementCodec<C>) {
+            auto elem_codec = msgpack_detail::get_element_codec(codec);
+            auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+            if (!msgpack_detail::write_array_header(output, value.size())) return false;
+            for (auto&& elem : value) {
+                if (!elem_fmt.serialize(std::forward<decltype(elem)>(elem), output)) return false;
+            }
+            return true;
+        } else if constexpr (is_tuple_v<val_t>) {
+            return serialize_tuple(std::forward<decltype(value)>(value), output,
+                                   std::make_index_sequence<std::tuple_size_v<val_t>>{});
+        } else if constexpr (is_variant_v<val_t>) {
+            return serialize_variant(std::forward<decltype(value)>(value), output,
+                                     std::make_index_sequence<std::variant_size_v<val_t>>{});
+        } else if constexpr (is_range_holder_v<val_t> && msgpack_detail::HasElementCodec<C>) {
+            return serialize_range_holder(std::forward<decltype(value)>(value), output);
+        } else {
+            static_assert(sizeof(val_t) == 0, "msgpack_format: unsupported native value");
+        }
+    }
+
+    template<typename ByteStream>
+    bool serialize_signed(std::int64_t value, ByteStream& output) const {
+        if (value >= 0) return serialize_unsigned(static_cast<std::uint64_t>(value), output);
+        if (value >= -32) {
+            return msgpack_detail::write_byte(output,
+                                              static_cast<std::uint8_t>(static_cast<std::int8_t>(value)));
+        }
+        if (value >= std::numeric_limits<std::int8_t>::min()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::int8) &&
+                   msgpack_detail::write_byte(output, static_cast<std::uint8_t>(static_cast<std::int8_t>(value)));
+        }
+        if (value >= std::numeric_limits<std::int16_t>::min()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::int16) &&
+                   msgpack_detail::write_be(output, static_cast<std::uint16_t>(static_cast<std::int16_t>(value)));
+        }
+        if (value >= std::numeric_limits<std::int32_t>::min()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::int32) &&
+                   msgpack_detail::write_be(output, static_cast<std::uint32_t>(static_cast<std::int32_t>(value)));
+        }
+        return msgpack_detail::write_byte(output, msgpack_detail::int64) &&
+               msgpack_detail::write_be(output, static_cast<std::uint64_t>(value));
+    }
+
+    template<typename ByteStream>
+    bool serialize_unsigned(std::uint64_t value, ByteStream& output) const {
+        if (value <= 0x7F) return msgpack_detail::write_byte(output, static_cast<std::uint8_t>(value));
+        if (value <= std::numeric_limits<std::uint8_t>::max()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::uint8) &&
+                   msgpack_detail::write_byte(output, static_cast<std::uint8_t>(value));
+        }
+        if (value <= std::numeric_limits<std::uint16_t>::max()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::uint16) &&
+                   msgpack_detail::write_be(output, static_cast<std::uint16_t>(value));
+        }
+        if (value <= std::numeric_limits<std::uint32_t>::max()) {
+            return msgpack_detail::write_byte(output, msgpack_detail::uint32) &&
+                   msgpack_detail::write_be(output, static_cast<std::uint32_t>(value));
+        }
+        return msgpack_detail::write_byte(output, msgpack_detail::uint64) &&
+               msgpack_detail::write_be(output, value);
+    }
+
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_native(std::uint8_t marker, ByteStream& input) const {
+        using val_t = std::decay_t<value_type>;
+        if constexpr (is_msgpack_ext_codec_v<C>) {
+            return deserialize_ext(marker, input);
+        } else if constexpr (std::same_as<val_t, std::monostate>) {
+            if (marker != msgpack_detail::nil) return std::nullopt;
+            return std::monostate{};
+        } else if constexpr (std::same_as<val_t, bool>) {
+            if (marker == msgpack_detail::true_value) return true;
+            if (marker == msgpack_detail::false_value) return false;
+            return std::nullopt;
+        } else if constexpr (std::signed_integral<val_t> && !std::same_as<val_t, bool>) {
+            return deserialize_signed<val_t>(marker, input);
+        } else if constexpr (std::unsigned_integral<val_t> && !std::same_as<val_t, bool>) {
+            return deserialize_unsigned<val_t>(marker, input);
+        } else if constexpr (std::same_as<val_t, float>) {
+            if (marker == msgpack_detail::float32) {
+                auto bits = msgpack_detail::read_be<std::uint32_t>(input);
+                if (!bits) return std::nullopt;
+                return std::bit_cast<float>(*bits);
+            }
+            return std::nullopt;
+        } else if constexpr (std::same_as<val_t, double>) {
+            if (marker == msgpack_detail::float64) {
+                auto bits = msgpack_detail::read_be<std::uint64_t>(input);
+                if (!bits) return std::nullopt;
+                return std::bit_cast<double>(*bits);
+            }
+            if (marker == msgpack_detail::float32) {
+                auto bits = msgpack_detail::read_be<std::uint32_t>(input);
+                if (!bits) return std::nullopt;
+                return static_cast<double>(std::bit_cast<float>(*bits));
+            }
+            return std::nullopt;
+        } else if constexpr (msgpack_detail::is_std_string_v<val_t>) {
+            auto str = msgpack_detail::read_string(input, marker);
+            if (!str) return std::nullopt;
+            return val_t(str->begin(), str->end());
+        } else if constexpr (msgpack_detail::is_optional_like_v<val_t> && msgpack_detail::HasValueCodec<C>) {
+            if (marker == msgpack_detail::nil) return value_type{std::nullopt};
+            auto inner_codec = msgpack_detail::get_value_codec(codec);
+            auto inner_fmt = msgpack_format<decltype(inner_codec), ByteT>(inner_codec);
+            auto inner = inner_fmt.deserialize_with_marker(marker, input);
+            if (!inner) return std::nullopt;
+            return value_type{std::move(*inner)};
+        } else if constexpr (msgpack_detail::StringKeyedPairContainer<val_t> && msgpack_detail::HasElementCodec<C>) {
+            return deserialize_string_keyed_map(marker, input);
+        } else if constexpr (msgpack_detail::NonMapContainer<val_t> && msgpack_detail::HasElementCodec<C>) {
+            return deserialize_container(marker, input);
+        } else if constexpr (is_tuple_v<val_t>) {
+            return deserialize_tuple(marker, input, std::make_index_sequence<std::tuple_size_v<val_t>>{});
+        } else if constexpr (is_variant_v<val_t>) {
+            return deserialize_variant(marker, input, std::make_index_sequence<std::variant_size_v<val_t>>{});
+        } else if constexpr (is_range_holder_v<val_t> && msgpack_detail::HasElementCodec<C>) {
+            return deserialize_range_holder(marker, input);
+        } else {
+            static_assert(sizeof(val_t) == 0, "msgpack_format: unsupported native value");
+        }
+    }
+
+    template<typename ByteStream>
+    bool serialize_ext(const value_type& value, ByteStream& output) const {
+        auto payload = codec.encoder(value);
+
+        if constexpr (is_msgpack_ext_payload_v<decltype(payload)>) {
+            if (!msgpack_detail::write_ext_header(output, payload.size, codec.ext_type_id)) return false;
+            for (auto byte : payload.bytes) {
+                if (!msgpack_detail::write_byte(output, msgpack_detail::to_u8(byte))) return false;
+            }
+            return true;
+        } else {
+            static_assert(std::ranges::range<decltype(payload)>,
+                          "msgpack_ext_codec encoder must return a range or msgpack_ext_payload");
+            static_assert(std::same_as<std::decay_t<std::ranges::range_value_t<decltype(payload)>>, std::byte>,
+                          "msgpack_ext_codec encoder range must yield std::byte");
+
+            if constexpr (std::ranges::sized_range<decltype(payload)>) {
+                auto payload_size = static_cast<std::size_t>(std::ranges::size(payload));
+                if (!msgpack_detail::write_ext_header(output, payload_size, codec.ext_type_id)) return false;
+                for (auto byte : payload) {
+                    if (!msgpack_detail::write_byte(output, msgpack_detail::to_u8(byte))) return false;
+                }
+                return true;
+            } else {
+                static_assert(sizeof(payload) == 0,
+                              "msgpack_ext_codec encoder range must be sized, or return msgpack_ext_payload");
+            }
+        }
+    }
+
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_ext(std::uint8_t marker, ByteStream& input) const {
+        auto ext_header = msgpack_detail::read_ext_header(input, marker);
+        if (!ext_header) return std::nullopt;
+
+        auto [payload_size, type_id] = *ext_header;
+        auto raw = msgpack_detail::read_raw(input, payload_size);
+        if (!raw) return std::nullopt;
+        if (type_id != codec.ext_type_id) return std::nullopt;
+
+        auto as_span = std::span<const std::byte>(reinterpret_cast<const std::byte*>(raw->data()), raw->size());
+        if constexpr (!requires { codec.decoder(as_span); } &&
+                      !requires { codec.decoder(range_holder<std::byte>(move_only_generator<std::byte>{})); }) {
+            static_assert(sizeof(value_type) == 0,
+                          "msgpack_ext_codec decoder must accept span<const byte> or range_holder<byte>");
+        }
+
+        auto decoded = [&]() {
+            if constexpr (requires { codec.decoder(as_span); }) {
+                return codec.decoder(as_span);
+            } else {
+                range_holder<std::byte> payload_range(
+                    move_only_generator<std::byte>(
+                        [bytes = std::move(*raw), idx = std::size_t{0}]() mutable -> std::optional<std::byte> {
+                            if (idx >= bytes.size()) return std::nullopt;
+                            return static_cast<std::byte>(static_cast<std::uint8_t>(bytes[idx++]));
+                        }));
+                return codec.decoder(std::move(payload_range));
+            }
+        }();
+        if constexpr (std::same_as<std::decay_t<decltype(decoded)>, std::optional<value_type>>) {
+            return decoded;
+        } else {
+            return std::optional<value_type>{std::move(decoded)};
+        }
+    }
+
+    template<typename T, typename ByteStream>
+    std::optional<T> deserialize_signed(std::uint8_t marker, ByteStream& input) const {
+        if (marker <= 0x7F) return static_cast<T>(marker);
+        if (marker >= 0xE0) return static_cast<T>(static_cast<std::int8_t>(marker));
+        if (marker == msgpack_detail::uint8) {
+            auto value = msgpack_detail::read_byte(input);
+            return value ? msgpack_detail::checked_signed<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint16) {
+            auto value = msgpack_detail::read_be<std::uint16_t>(input);
+            return value ? msgpack_detail::checked_signed<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint32) {
+            auto value = msgpack_detail::read_be<std::uint32_t>(input);
+            return value ? msgpack_detail::checked_signed<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint64) {
+            auto value = msgpack_detail::read_be<std::uint64_t>(input);
+            if (!value || *value > static_cast<std::uint64_t>(std::numeric_limits<T>::max())) return std::nullopt;
+            return static_cast<T>(*value);
+        }
+        if (marker == msgpack_detail::int8) {
+            auto value = msgpack_detail::read_byte(input);
+            return value ? msgpack_detail::checked_signed<T>(static_cast<std::int8_t>(*value)) : std::nullopt;
+        }
+        if (marker == msgpack_detail::int16) {
+            auto value = msgpack_detail::read_be<std::uint16_t>(input);
+            return value ? msgpack_detail::checked_signed<T>(static_cast<std::int16_t>(*value)) : std::nullopt;
+        }
+        if (marker == msgpack_detail::int32) {
+            auto value = msgpack_detail::read_be<std::uint32_t>(input);
+            return value ? msgpack_detail::checked_signed<T>(static_cast<std::int32_t>(*value)) : std::nullopt;
+        }
+        if (marker == msgpack_detail::int64) {
+            auto value = msgpack_detail::read_be<std::uint64_t>(input);
+            if (!value) return std::nullopt;
+            auto signed_value = static_cast<std::int64_t>(*value);
+            if (signed_value < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
+                signed_value > static_cast<std::int64_t>(std::numeric_limits<T>::max())) return std::nullopt;
+            return static_cast<T>(signed_value);
+        }
+        return std::nullopt;
+    }
+
+    template<typename T, typename ByteStream>
+    std::optional<T> deserialize_unsigned(std::uint8_t marker, ByteStream& input) const {
+        if (marker <= 0x7F) return static_cast<T>(marker);
+        if (marker >= 0xE0) return std::nullopt;
+        if (marker == msgpack_detail::uint8) {
+            auto value = msgpack_detail::read_byte(input);
+            return value ? msgpack_detail::checked_unsigned<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint16) {
+            auto value = msgpack_detail::read_be<std::uint16_t>(input);
+            return value ? msgpack_detail::checked_unsigned<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint32) {
+            auto value = msgpack_detail::read_be<std::uint32_t>(input);
+            return value ? msgpack_detail::checked_unsigned<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::uint64) {
+            auto value = msgpack_detail::read_be<std::uint64_t>(input);
+            return value ? msgpack_detail::checked_unsigned<T>(*value) : std::nullopt;
+        }
+        if (marker == msgpack_detail::int8) {
+            auto value = msgpack_detail::read_byte(input);
+            if (!value || static_cast<std::int8_t>(*value) < 0) return std::nullopt;
+            return msgpack_detail::checked_unsigned<T>(static_cast<std::uint8_t>(*value));
+        }
+        if (marker == msgpack_detail::int16) {
+            auto value = msgpack_detail::read_be<std::uint16_t>(input);
+            if (!value) return std::nullopt;
+            auto signed_value = static_cast<std::int16_t>(*value);
+            if (signed_value < 0) return std::nullopt;
+            return msgpack_detail::checked_unsigned<T>(static_cast<std::uint16_t>(signed_value));
+        }
+        if (marker == msgpack_detail::int32) {
+            auto value = msgpack_detail::read_be<std::uint32_t>(input);
+            if (!value) return std::nullopt;
+            auto signed_value = static_cast<std::int32_t>(*value);
+            if (signed_value < 0) return std::nullopt;
+            return msgpack_detail::checked_unsigned<T>(static_cast<std::uint32_t>(signed_value));
+        }
+        if (marker == msgpack_detail::int64) {
+            auto value = msgpack_detail::read_be<std::uint64_t>(input);
+            if (!value) return std::nullopt;
+            auto signed_value = static_cast<std::int64_t>(*value);
+            if (signed_value < 0) return std::nullopt;
+            return msgpack_detail::checked_unsigned<T>(static_cast<std::uint64_t>(signed_value));
+        }
+        return std::nullopt;
+    }
+
+    template<typename TupleValue, typename ByteStream, std::size_t... Is>
+    bool serialize_tuple(TupleValue&& tuple_value, ByteStream& output, std::index_sequence<Is...>) const {
+        if constexpr (msgpack_detail::all_codecs_named_v<C>) {
+            assert(!has_duplicate_names(codec.codecs) && "msgpack_format: duplicate member names detected");
+            if (!msgpack_detail::write_map_header(output, sizeof...(Is))) return false;
+            return (serialize_named_tuple_element<Is>(std::forward<TupleValue>(tuple_value), output) && ...);
+        } else {
+            if (!msgpack_detail::write_array_header(output, sizeof...(Is))) return false;
+            return (serialize_tuple_element<Is>(std::forward<TupleValue>(tuple_value), output) && ...);
+        }
+    }
+
+    template<std::size_t I, typename TupleValue, typename ByteStream>
+    bool serialize_tuple_element(TupleValue&& tuple_value, ByteStream& output) const {
+        auto elem_codec = std::get<I>(codec.codecs);
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        return elem_fmt.serialize(std::get<I>(std::forward<TupleValue>(tuple_value)), output);
+    }
+
+    template<std::size_t I, typename TupleValue, typename ByteStream>
+    bool serialize_named_tuple_element(TupleValue&& tuple_value, ByteStream& output) const {
+        auto elem_codec = std::get<I>(codec.codecs);
+        if (!msgpack_detail::write_string(output, std::string(elem_codec.member_name))) return false;
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        return elem_fmt.serialize(std::get<I>(std::forward<TupleValue>(tuple_value)), output);
+    }
+
+    template<typename ByteStream, std::size_t... Is>
+    std::optional<value_type> deserialize_tuple(std::uint8_t marker, ByteStream& input,
+                                                std::index_sequence<Is...>) const {
+        if constexpr (msgpack_detail::all_codecs_named_v<C>) {
+            return deserialize_named_tuple(marker, input, std::index_sequence<Is...>{});
+        } else {
+            auto size = msgpack_detail::read_array_size(input, marker);
+            if (!size || *size != sizeof...(Is)) return std::nullopt;
+            std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(codec.codecs)>::value_type>...>
+                elements{deserialize_tuple_element<Is>(input)...};
+            if ((std::get<Is>(elements).has_value() && ...)) {
+                return value_type(std::move(*std::get<Is>(elements))...);
+            }
+            return std::nullopt;
+        }
+    }
+
+    template<std::size_t I, typename ByteStream>
+    auto deserialize_tuple_element(ByteStream& input) const {
+        auto elem_codec = std::get<I>(codec.codecs);
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        return elem_fmt.deserialize(input);
+    }
+
+    template<typename ByteStream, std::size_t... Is>
+    std::optional<value_type> deserialize_named_tuple(std::uint8_t marker, ByteStream& input,
+                                                       std::index_sequence<Is...>) const {
+        auto size = msgpack_detail::read_map_size(input, marker);
+        if (!size) return std::nullopt;
+        std::tuple<std::optional<typename std::tuple_element_t<Is, decltype(codec.codecs)>::value_type>...> elements;
+        for (std::size_t i = 0; i < *size; ++i) {
+            auto key_marker = msgpack_detail::read_byte(input);
+            if (!key_marker) return std::nullopt;
+            auto key = msgpack_detail::read_string(input, *key_marker);
+            if (!key) return std::nullopt;
+            bool matched = (deserialize_named_tuple_element<Is>(*key, elements, input) || ...);
+            if (!matched && !msgpack_detail::skip_value(input)) return std::nullopt;
+        }
+        (fill_missing_named_tuple_element<Is>(elements), ...);
+        if ((std::get<Is>(elements).has_value() && ...)) {
+            return value_type(std::move(*std::get<Is>(elements))...);
+        }
+        return std::nullopt;
+    }
+
+    template<std::size_t I, typename ElementsTuple, typename ByteStream>
+    bool deserialize_named_tuple_element(const std::string& key, ElementsTuple& elements,
+                                         ByteStream& input) const {
+        auto elem_codec = std::get<I>(codec.codecs);
+        if (key != elem_codec.member_name) return false;
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        std::get<I>(elements) = elem_fmt.deserialize(input);
+        return true;
+    }
+
+    template<std::size_t I, typename ElementsTuple>
+    void fill_missing_named_tuple_element(ElementsTuple& elements) const {
+        if (std::get<I>(elements).has_value()) return;
+        auto named_codec = std::get<I>(codec.codecs);
+        using elem_value_t = typename std::decay_t<decltype(named_codec)>::value_type;
+        if constexpr (requires { named_codec.get_fallback(); }) {
+            std::get<I>(elements) = std::optional<elem_value_t>{named_codec.get_fallback()};
+        } else if constexpr (requires { named_codec.field_codec.get_fallback(); }) {
+            std::get<I>(elements) = std::optional<elem_value_t>{named_codec.field_codec.get_fallback()};
+        }
+    }
+
+    template<typename VariantValue, typename ByteStream, std::size_t... Is>
+    bool serialize_variant(VariantValue&& variant_value, ByteStream& output, std::index_sequence<Is...>) const {
+        if (!msgpack_detail::write_array_header(output, 2)) return false;
+        if (!serialize_unsigned(static_cast<std::uint64_t>(variant_value.index()), output)) return false;
+        bool result = false;
+        (serialize_variant_alternative<Is>(std::forward<VariantValue>(variant_value), output, result) || ...);
+        return result;
+    }
+
+    template<std::size_t I, typename VariantValue, typename ByteStream>
+    bool serialize_variant_alternative(VariantValue&& variant_value, ByteStream& output, bool& result) const {
+        if (variant_value.index() != I) return false;
+        auto elem_codec = std::get<I>(codec.codecs);
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        result = elem_fmt.serialize(std::get<I>(std::forward<VariantValue>(variant_value)), output);
+        return true;
+    }
+
+    template<typename ByteStream, std::size_t... Is>
+    std::optional<value_type> deserialize_variant(std::uint8_t marker, ByteStream& input,
+                                                  std::index_sequence<Is...>) const {
+        auto size = msgpack_detail::read_array_size(input, marker);
+        if (!size || *size != 2) return std::nullopt;
+        auto index_marker = msgpack_detail::read_byte(input);
+        if (!index_marker) return std::nullopt;
+        auto index = deserialize_unsigned<std::size_t>(*index_marker, input);
+        if (!index || *index >= sizeof...(Is)) return std::nullopt;
+        std::optional<value_type> result;
+        (deserialize_variant_alternative<Is>(*index, input, result) || ...);
+        return result;
+    }
+
+    template<std::size_t I, typename ByteStream>
+    bool deserialize_variant_alternative(std::size_t index, ByteStream& input,
+                                         std::optional<value_type>& result) const {
+        if (index != I) return false;
+        auto elem_codec = std::get<I>(codec.codecs);
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        if (auto elem = elem_fmt.deserialize(input)) {
+            result = value_type(std::in_place_index<I>, std::move(*elem));
+        }
+        return true;
+    }
+
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_string_keyed_map(std::uint8_t marker, ByteStream& input) const {
+        auto size = msgpack_detail::read_map_size(input, marker);
+        if (!size) return std::nullopt;
+        auto elem_codec = msgpack_detail::get_element_codec(codec);
+        auto val_codec = std::get<1>(elem_codec.codec.codecs);
+        auto val_fmt = msgpack_format<decltype(val_codec), ByteT>(val_codec);
+        value_type result;
+        for (std::size_t i = 0; i < *size; ++i) {
+            auto key_marker = msgpack_detail::read_byte(input);
+            if (!key_marker) return std::nullopt;
+            auto key = msgpack_detail::read_string(input, *key_marker);
+            if (!key) return std::nullopt;
+            auto val = val_fmt.deserialize(input);
+            if (!val) return std::nullopt;
+            if constexpr (requires { result.emplace(std::move(*key), std::move(*val)); }) {
+                result.emplace(std::move(*key), std::move(*val));
+            } else if constexpr (requires {
+                                     result.insert(typename value_type::value_type{std::move(*key), std::move(*val)});
+                                 }) {
+                result.insert(typename value_type::value_type{std::move(*key), std::move(*val)});
+            }
+        }
+        return result;
+    }
+
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_container(std::uint8_t marker, ByteStream& input) const {
+        auto size = msgpack_detail::read_array_size(input, marker);
+        if (!size) return std::nullopt;
+        auto elem_codec = msgpack_detail::get_element_codec(codec);
+        auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+        value_type result{};
+        if constexpr (msgpack_detail::is_std_array_v<value_type>) {
+            if (*size != std::tuple_size_v<value_type>) return std::nullopt;
+        } else if constexpr (requires { result.reserve(*size); }) {
+            result.reserve(*size);
+        }
+        for (std::size_t i = 0; i < *size; ++i) {
+            auto elem = elem_fmt.deserialize(input);
+            if (!elem) return std::nullopt;
+            if constexpr (requires { result.push_back(std::move(*elem)); }) {
+                result.push_back(std::move(*elem));
+            } else if constexpr (requires { result.emplace_back(std::move(*elem)); }) {
+                result.emplace_back(std::move(*elem));
+            } else if constexpr (requires { result.insert(std::move(*elem)); }) {
+                result.insert(std::move(*elem));
+            } else if constexpr (requires { result.insert(result.end(), std::move(*elem)); }) {
+                result.insert(result.end(), std::move(*elem));
+            } else if constexpr (requires { result[i] = std::move(*elem); }) {
+                result[i] = std::move(*elem);
+            }
+        }
+        return result;
+    }
+
+    template<typename RangeHolderValue, typename ByteStream>
+    bool serialize_range_holder(RangeHolderValue&& range_value, ByteStream& output) const {
+        using elem_t = typename std::decay_t<RangeHolderValue>::value_type;
+        if constexpr (msgpack_detail::is_binary_element_v<elem_t>) {
+            std::vector<std::uint8_t> bytes;
+            for (auto&& elem : range_value) {
+                if constexpr (std::same_as<std::decay_t<elem_t>, std::byte>) {
+                    bytes.push_back(std::to_integer<std::uint8_t>(elem));
+                } else {
+                    bytes.push_back(static_cast<std::uint8_t>(elem));
+                }
+            }
+            if (!msgpack_detail::write_bin_header(output, bytes.size())) return false;
+            return msgpack_detail::write_raw(output, reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        } else if constexpr (msgpack_detail::is_char_type_v<elem_t>) {
+            std::string str;
+            for (auto&& ch : range_value) {
+                auto c = static_cast<char>(ch);
+                if (c == '\0') break;
+                str.push_back(c);
+            }
+            return msgpack_detail::write_string(output, str);
+        } else {
+            std::vector<elem_t> values;
+            for (auto&& elem : range_value) values.push_back(elem);
+            auto elem_codec = msgpack_detail::get_element_codec(codec);
+            auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+            if (!msgpack_detail::write_array_header(output, values.size())) return false;
+            for (auto&& elem : values) {
+                if (!elem_fmt.serialize(std::forward<decltype(elem)>(elem), output)) return false;
+            }
+            return true;
+        }
+    }
+
+    template<typename ByteStream>
+    std::optional<value_type> deserialize_range_holder(std::uint8_t marker, ByteStream& input) const {
+        using elem_t = typename std::decay_t<value_type>::value_type;
+        if constexpr (msgpack_detail::is_binary_element_v<elem_t>) {
+            if (auto size = msgpack_detail::read_bin_size(input, marker)) {
+                auto raw = msgpack_detail::read_raw(input, *size);
+                if (!raw) return std::nullopt;
+                return value_type([raw = std::move(*raw), idx = std::size_t{0}]() mutable -> std::optional<elem_t> {
+                    if (idx >= raw.size()) return std::nullopt;
+                    auto value = static_cast<std::uint8_t>(raw[idx++]);
+                    if constexpr (std::same_as<std::decay_t<elem_t>, std::byte>) {
+                        return static_cast<std::byte>(value);
+                    } else {
+                        return static_cast<elem_t>(value);
+                    }
+                });
+            }
+
+            // Backward-compatible fallback for older array-form payloads.
+            auto size = msgpack_detail::read_array_size(input, marker);
+            if (!size) return std::nullopt;
+            std::vector<elem_t> values;
+            values.reserve(*size);
+            for (std::size_t i = 0; i < *size; ++i) {
+                auto elem_marker = msgpack_detail::read_byte(input);
+                if (!elem_marker) return std::nullopt;
+                auto value = deserialize_unsigned<std::uint8_t>(*elem_marker, input);
+                if (!value) return std::nullopt;
+                if constexpr (std::same_as<std::decay_t<elem_t>, std::byte>) {
+                    values.push_back(static_cast<std::byte>(*value));
+                } else {
+                    values.push_back(static_cast<elem_t>(*value));
+                }
+            }
+            return value_type(std::move(values));
+        } else if constexpr (msgpack_detail::is_char_type_v<elem_t>) {
+            auto str = msgpack_detail::read_string(input, marker);
+            if (!str) return std::nullopt;
+            return value_type([str = std::move(*str), idx = std::size_t{0}]() mutable -> std::optional<elem_t> {
+                if (idx < str.size()) return static_cast<elem_t>(str[idx++]);
+                if (idx == str.size()) {
+                    ++idx;
+                    return elem_t{};
+                }
+                return std::nullopt;
+            });
+        } else {
+            auto size = msgpack_detail::read_array_size(input, marker);
+            if (!size) return std::nullopt;
+            auto elem_codec = msgpack_detail::get_element_codec(codec);
+            auto elem_fmt = msgpack_format<decltype(elem_codec), ByteT>(elem_codec);
+            std::vector<elem_t> values;
+            values.reserve(*size);
+            for (std::size_t i = 0; i < *size; ++i) {
+                auto elem = elem_fmt.deserialize(input);
+                if (!elem) return std::nullopt;
+                values.push_back(std::move(*elem));
+            }
+            return value_type(std::move(values));
+        }
+    }
+};
+
+/**
+ * @brief Deduction guide for msgpack_format.
+ */
+template<typename C>
+msgpack_format(C&&) -> msgpack_format<std::decay_t<C>>;
+
+/**
+ * @brief Helper function to create a msgpack_format with explicit byte type.
+ *
+ * @tparam ByteT The byte type to use for serialization (`char` or `std::byte`).
+ * @param c The codec to use for encoding/decoding.
+ * @return A msgpack_format configured with the specified codec and byte type.
+ */
+template<typename ByteT = std::byte>
+static constexpr auto make_msgpack_format(Codec auto&& c) {
+    return msgpack_format<std::decay_t<decltype(c)>, ByteT>(std::forward<decltype(c)>(c));
+}
+
+} // namespace muesli
+
+

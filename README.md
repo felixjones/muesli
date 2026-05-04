@@ -77,6 +77,7 @@ int main() {
 - Compile-time bi-directional serialisation
 - Zero runtime overhead
 - Extensible codecs and formats
+- Built-in binary, JSON, and MessagePack formats
 - Support for C++20 concepts and ranges
 - Header-only library
 
@@ -144,7 +145,7 @@ Quick links:
 
 - Generate schemas & documentation from codecs
 - Data upgrade and migration tools
-- More built-in formats (MessagePack, CBOR, JSON, YAML, TOML, XML)
+- More built-in formats (CBOR, YAML, TOML, XML)
 - C++23 support for `std::expected`
 - C++26 support for reflection to auto-generate codecs
 
